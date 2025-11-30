@@ -126,6 +126,7 @@ const formatDate = (dateStr: string) => {
   return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });
 };
 
+// --- GOOGLE CALENDAR LINK JENERATÖRÜ ---
 const openGoogleCalendar = (lesson: Partial<Lesson>, members: Member[], trainer: Trainer | undefined) => {
   const startStr = (lesson.date + 'T' + lesson.startTime + ':00').replace(/[-:]/g, '');
   const endStr = (lesson.date + 'T' + lesson.endTime + ':00').replace(/[-:]/g, '');
@@ -397,6 +398,122 @@ function TrainersView({ trainers, setTrainers }: any) {
   );
 }
 
+// --- LESSONS VIEW ---
+function LessonsView({ lessons, setLessons, members, trainers, toggleLessonStatus }: any) {
+  const [currentWeekStart, setCurrentWeekStart] = useState(new Date());
+  const [showModal, setShowModal] = useState(false);
+  const [formData, setFormData] = useState<Partial<Lesson>>({});
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
+
+  const weekDates = useMemo(() => {
+    const start = new Date(currentWeekStart);
+    const day = start.getDay();
+    const diff = start.getDate() - day + (day === 0 ? -6 : 1);
+    start.setDate(diff);
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      return d.toISOString().split('T')[0];
+    });
+  }, [currentWeekStart]);
+
+  const uniqueGroups = useMemo(() => { const groups = new Map(); members.forEach((m: Member) => { if (m.groupId && m.groupName) { if (!groups.has(m.groupId)) { groups.set(m.groupId, { id: m.groupId, name: m.groupName }); } } }); return Array.from(groups.values()); }, [members]);
+
+  const handleCellClick = (date: string, time: number) => {
+    setSelectedLesson(null);
+    setFormData({ date, startTime: `${time.toString().padStart(2, '0')}:00`, endTime: `${(time + 1).toString().padStart(2, '0')}:00`, type: 'mat', trainerId: '', memberIds: [], groupId: '', groupName: '' });
+    setShowModal(true);
+  };
+
+  const handleLessonClick = (lesson: Lesson) => {
+    setSelectedLesson(lesson);
+    setFormData(lesson);
+    setShowModal(true);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (selectedLesson) return; 
+
+    setIsSyncing(true);
+    let selectedMemberIds = formData.memberIds || [];
+    let title = formData.title || 'Ders';
+
+    if (formData.type === 'group' && formData.groupId) {
+      const groupMembers = members.filter((m: Member) => m.groupId === formData.groupId);
+      selectedMemberIds = groupMembers.map((m: Member) => m.id);
+      title = `${formData.groupName} Dersi`;
+    } else if (formData.memberIds && formData.memberIds.length > 0) {
+       const member = members.find((m: Member) => m.id === formData.memberIds![0]);
+       if (member) title = `${member.firstName} ${member.lastName} Dersi`;
+    }
+
+    const newLesson = { ...formData, id: generateId(), isCompleted: false, memberIds: selectedMemberIds, title } as Lesson;
+    const trainer = trainers.find((t: Trainer) => t.id === newLesson.trainerId);
+    const lessonMembers = members.filter((m: Member) => selectedMemberIds.includes(m.id));
+    
+    // Google Takvim URL'ini aç
+    openGoogleCalendar(newLesson, lessonMembers, trainer);
+    
+    setLessons([...lessons, newLesson]);
+    setIsSyncing(false);
+    setShowModal(false);
+  };
+
+  const handleToggleComplete = () => {
+      if (selectedLesson) {
+          toggleLessonStatus(selectedLesson);
+          setShowModal(false);
+      }
+  };
+
+  return (
+    <div className="h-full flex flex-col space-y-6">
+      <div className="flex justify-between items-center"><h1 className="text-3xl font-light text-white">Stüdyo Programı</h1><GlassCard className="flex items-center gap-6 px-2 py-1 bg-black/40 rounded-full"><IconButton onClick={() => { const d = new Date(currentWeekStart); d.setDate(d.getDate()-7); setCurrentWeekStart(d); }}><ChevronLeft size={20} /></IconButton><span className="font-medium text-white/80 min-w-[200px] text-center">{formatDate(weekDates[0])} - {formatDate(weekDates[6])}</span><IconButton onClick={() => { const d = new Date(currentWeekStart); d.setDate(d.getDate()+7); setCurrentWeekStart(d); }}><ChevronRight size={20} /></IconButton></GlassCard></div>
+      <GlassCard className="flex-1 overflow-hidden flex flex-col shadow-2xl bg-[#18181b]/60 border-white/5">
+        <div className="flex-1 overflow-x-auto custom-scrollbar">
+          <div className="min-w-[1200px]">
+            <div className="grid grid-cols-8 border-b border-white/5 bg-white/5">
+              <div className="p-4 border-r border-white/5 text-white/30 text-center text-xs font-bold uppercase tracking-widest sticky left-0 bg-[#252528] z-10 shadow-lg">Saat</div>
+              {weekDates.map((date, i) => (<div key={date} className="p-4 border-r border-white/5 text-center last:border-r-0"><div className="text-rose-400 text-xs font-bold uppercase mb-1 tracking-widest">{WEEKDAYS[i]}</div><div className="text-white text-xl font-light">{date.split('-')[2]}</div></div>))}
+            </div>
+            <div className="overflow-y-auto custom-scrollbar max-h-[calc(100vh-250px)]">
+              {HOURS.map(hour => (
+                <div key={hour} className="grid grid-cols-8 border-b border-white/5 min-h-[120px]">
+                  <div className="border-r border-white/5 p-4 text-xs text-white/30 text-center font-medium bg-[#1e1e20] sticky left-0 z-10 shadow-lg">{`${hour.toString().padStart(2, '0')}:00`}</div>
+                  {weekDates.map(date => {
+                    const cellLessons = lessons.filter((l: Lesson) => l.date === date && parseInt(l.startTime.split(':')[0]) === hour);
+                    return (
+                      <div key={`${date}-${hour}`} className="border-r border-white/5 p-2 hover:bg-white/[0.02] transition-colors relative group" onClick={() => handleCellClick(date, hour)}>
+                        <div className="flex flex-wrap gap-1">
+                          {cellLessons.map(lesson => (
+                             <div key={lesson.id} onClick={(e) => { e.stopPropagation(); handleLessonClick(lesson); }} className={`p-1.5 rounded-lg text-[10px] border cursor-pointer shadow-sm transition-all hover:scale-105 hover:z-10 relative flex items-center gap-2 max-w-full group/item ${lesson.isCompleted ? 'bg-zinc-800/80 border-zinc-700 text-zinc-400' : lesson.type === 'group' ? 'bg-purple-500/10 border-purple-500/30 text-purple-200' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200'}`}>
+                               {lesson.isCompleted ? <Check size={10} className="shrink-0" /> : <div className="w-2 h-2 rounded-full bg-current opacity-50 shrink-0" />}
+                               <div className="truncate font-medium flex-1">{lesson.title}</div>
+                               {lesson.googleCalendarEventId && (<div className="text-white/30 p-1" title="Google Takvim'e İşlendi"><CalendarCheck size={10} /></div>)}
+                             </div>
+                          ))}
+                        </div>
+                        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 pointer-events-none"><div className="w-6 h-6 rounded-full bg-rose-500/20 flex items-center justify-center text-rose-400"><Plus size={14}/></div></div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </GlassCard>
+      {showModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"><GlassCard className="w-full max-w-md bg-[#1c1c1e] border-white/10 max-h-[90vh] overflow-y-auto custom-scrollbar"><div className="p-6 border-b border-white/5 flex justify-between items-center"><h3 className="text-xl font-light text-white">{selectedLesson ? 'Ders Detayları' : 'Ders Planla'}</h3><button onClick={() => setShowModal(false)}><X className="text-white/50 hover:text-white" /></button></div>{selectedLesson ? (<div className="p-6 space-y-6"><div className="space-y-4"><div className="flex items-center justify-between"><h4 className="text-lg font-bold text-white">{selectedLesson.title}</h4><span className={`text-xs px-2 py-1 rounded uppercase ${selectedLesson.isCompleted ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>{selectedLesson.isCompleted ? 'Tamamlandı' : 'Bekliyor'}</span></div><div className="grid grid-cols-2 gap-4 text-sm text-white/60"><div><p className="text-xs text-white/30 uppercase">Tarih</p>{formatDate(selectedLesson.date)}</div><div><p className="text-xs text-white/30 uppercase">Saat</p>{selectedLesson.startTime} - {selectedLesson.endTime}</div></div>{selectedLesson.googleCalendarEventId && (<div className="flex items-center gap-2 text-xs text-blue-400 bg-blue-500/10 p-2 rounded"><CalendarCheck size={14} /> Google Takvim ile Senkronize</div>)}
+      </div><div className="pt-6 border-t border-white/10">{selectedLesson.isCompleted ? (<PrimaryButton onClick={handleToggleComplete} className="w-full bg-slate-700 hover:bg-slate-600"><RefreshCcw size={18} /> Geri Al (Tamamlanmadı Yap)</PrimaryButton>) : (<PrimaryButton onClick={handleToggleComplete} className="w-full bg-emerald-600 hover:bg-emerald-700"><Check size={18} /> Dersi Tamamla & Bakiyeden Düş</PrimaryButton>)}<p className="text-[10px] text-white/30 text-center mt-3">{selectedLesson.isCompleted ? "Geri alındığında üyeye ders hakkı iade edilir ve hoca ödemesi iptal edilir." : "Ders tamamlandığında üyeden 1 ders düşülür ve hocaya hakediş yazılır."}</p></div></div>) : (
+      <form onSubmit={handleSubmit} className="p-6 space-y-4"><div className="space-y-2"><label className="text-xs text-white/50 ml-3">Eğitmen</label><PillSelect required value={formData.trainerId} onChange={e => setFormData({...formData, trainerId: e.target.value})}><option value="">Seçiniz...</option>{trainers.map((t: Trainer) => <option key={t.id} value={t.id}>{t.firstName} {t.lastName}</option>)}</PillSelect></div><div className="space-y-2"><label className="text-xs text-white/50 ml-3">Ders Tipi</label><PillSelect required value={formData.type} onChange={e => setFormData({...formData, type: e.target.value as any})}><option value="mat">Mat Pilates</option><option value="reformer">Reformer</option><option value="pregnant">Hamile Pilatesi</option><option value="group">Grup Ders</option></PillSelect></div>{formData.type === 'group' ? (<div className="space-y-2 animate-in fade-in"><label className="text-xs text-white/50 ml-3">Grup Seçimi</label><PillSelect required value={formData.groupId} onChange={e => { const selectedG = uniqueGroups.find((g: any) => g.id === e.target.value); setFormData({...formData, groupId: selectedG?.id, groupName: selectedG?.name}); }}><option value="">Grup Seçiniz...</option>{uniqueGroups.map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}</PillSelect></div>) : (<div className="space-y-2 animate-in fade-in"><label className="text-xs text-white/50 ml-3">Üye</label><PillSelect required value={formData.memberIds?.[0] || ''} onChange={e => setFormData({...formData, memberIds: [e.target.value]})}><option value="">Seçiniz...</option>{members.filter((m: Member) => !m.groupId).map((m: Member) => <option key={m.id} value={m.id}>{m.firstName} {m.lastName} ({m.remainingSessions} hak)</option>)}</PillSelect></div>)}<PrimaryButton type="submit" disabled={isSyncing} className="w-full mt-4">Kaydet ve Takvime Ekle</PrimaryButton></form>)}</GlassCard></div>
+      )}
+    </div>
+  );
+}
+
 // --- MEMBERS VIEW ---
 function MembersView({ members, setMembers, packages, setTransactions }: any) {
   const [showModal, setShowModal] = useState(false);
@@ -475,38 +592,6 @@ function MembersView({ members, setMembers, packages, setTransactions }: any) {
       {showGroupModal && (<div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"><GlassCard className="w-full max-w-2xl max-h-[90vh] overflow-y-auto border-white/10 bg-[#1c1c1e]"><div className="p-8 border-b border-white/5 flex justify-between items-center bg-purple-900/20"><div><h3 className="text-2xl font-light text-white">Grup Oluştur</h3><p className="text-white/40 text-sm">Grup üyelerini tek seferde ekleyin</p></div><button onClick={() => setShowGroupModal(false)}><X className="text-white/50 hover:text-white" /></button></div><form onSubmit={handleGroupSubmit} className="p-8 space-y-8"><section className="grid grid-cols-1 md:grid-cols-2 gap-6"><div className="space-y-2"><label className="text-sm text-white/60 ml-3">Grup Adı</label><PillInput required value={groupFormData.name} onChange={e => setGroupFormData({...groupFormData, name: e.target.value})} placeholder="Örn: Salı Ekibi" /></div><div className="space-y-2"><label className="text-sm text-white/60 ml-3">Grup Paketi</label><PillSelect required value={groupFormData.packageId} onChange={e => setGroupFormData({...groupFormData, packageId: e.target.value})}><option value="">Paket Seçiniz...</option>{packages.filter((p: any) => p.type === 'GROUP').map((p: any) => <option key={p.id} value={p.id}>{p.name} - {p.price} ₺ (Kişi Başı)</option>)}</PillSelect></div></section><section className="bg-black/20 p-6 rounded-3xl border border-white/5"><h4 className="text-white/80 font-medium mb-4 flex items-center justify-between"><span>Grup Üyeleri ({groupFormData.members.length}/12)</span></h4><div className="grid grid-cols-1 md:grid-cols-12 gap-3 mb-4 items-center"><div className="md:col-span-2"><PillInput placeholder="Ad" value={newGroupMember.firstName} onChange={e => setNewGroupMember({...newGroupMember, firstName: e.target.value})} className="h-10 text-sm px-3" /></div><div className="md:col-span-2"><PillInput placeholder="Soyad" value={newGroupMember.lastName} onChange={e => setNewGroupMember({...newGroupMember, lastName: e.target.value})} className="h-10 text-sm px-3" /></div><div className="md:col-span-3"><PillInput placeholder="Tel" value={newGroupMember.phone} onChange={e => setNewGroupMember({...newGroupMember, phone: e.target.value})} className="h-10 text-sm px-3" /></div><div className="md:col-span-3"><PillInput placeholder="E-posta" type="email" value={newGroupMember.email} onChange={e => setNewGroupMember({...newGroupMember, email: e.target.value})} className="h-10 text-sm px-3" /></div><div className="md:col-span-2"><button type="button" onClick={addMemberToGroupList} className="w-full h-10 bg-white/10 hover:bg-white/20 rounded-xl text-white text-sm font-medium transition-colors border border-white/10">+ Ekle</button></div></div><div className="space-y-2 max-h-[200px] overflow-y-auto custom-scrollbar">{groupFormData.members.map((m, idx) => (<div key={idx} className="flex items-center justify-between bg-white/5 p-3 rounded-xl border border-white/5"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-purple-500/20 text-purple-300 flex items-center justify-center text-xs font-bold">{idx + 1}</div><div><p className="text-sm text-white font-medium">{m.firstName} {m.lastName}</p><div className="flex items-center gap-2 text-xs text-white/40"><span>{m.phone}</span>{m.email && <span className="w-1 h-1 bg-white/20 rounded-full" />}{m.email && <span>{m.email}</span>}</div></div></div><button type="button" onClick={() => setGroupFormData({...groupFormData, members: groupFormData.members.filter((_, i) => i !== idx)})} className="text-white/20 hover:text-red-400"><X size={16} /></button></div>))}{groupFormData.members.length === 0 && <p className="text-white/20 text-sm text-center py-4">Henüz üye eklenmedi.</p>}</div></section><div className="pt-6 flex justify-end gap-4 border-t border-white/10"><PrimaryButton type="submit" className="px-10 bg-purple-600 hover:bg-purple-700">Grubu Kaydet</PrimaryButton></div></form></GlassCard></div>)}
       {/* ... ÖDEME MODALI ... */}
       {showPaymentModal && (<div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"><GlassCard className="w-full max-w-md bg-[#1c1c1e] border-white/10 shadow-2xl"><div className="p-6 border-b border-white/5 flex justify-between items-center"><h3 className="text-xl font-light text-white">Ödeme Al</h3><button onClick={() => setShowPaymentModal(false)}><X className="text-white/50 hover:text-white" /></button></div><form onSubmit={handlePaymentSubmit} className="p-6 space-y-6"><PillInput type="number" autoFocus value={paymentData.amount} onChange={e => setPaymentData({...paymentData, amount: e.target.value})} placeholder="Tutar (₺)" /><PillInput value={paymentData.description} onChange={e => setPaymentData({...paymentData, description: e.target.value})} placeholder="Açıklama" /><PrimaryButton type="submit" className="w-full">Ödemeyi Onayla</PrimaryButton></form></GlassCard></div>)}
-      
-      {/* BULK IMPORT MODALI */}
-      {showImportModal && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-              <GlassCard className="w-full max-w-2xl max-h-[90vh] overflow-y-auto border-white/10 bg-[#1c1c1e] shadow-2xl">
-                  <div className="p-6 border-b border-white/5 flex justify-between items-center">
-                      <h3 className="text-xl font-light text-white">Toplu Üye Yükle</h3>
-                      <button onClick={() => setShowImportModal(false)}><X className="text-white/50 hover:text-white" /></button>
-                  </div>
-                  <div className="p-6 space-y-6">
-                      <div className="bg-blue-500/10 p-4 rounded-xl border border-blue-500/20">
-                          <h4 className="text-blue-400 font-bold text-sm mb-2 flex items-center gap-2"><FileText size={14}/> Nasıl Kullanılır?</h4>
-                          <p className="text-white/60 text-xs leading-relaxed">
-                              Excel veya listenizden verileri kopyalayıp aşağıdaki alana yapıştırın. Her satır bir üye olmalıdır.<br/>
-                              <strong>Format:</strong> <code className="bg-black/30 px-1 rounded text-white">Ad, Soyad, Telefon, Kalan Ders Sayısı, Borç Miktarı</code><br/>
-                              <strong>Örnek:</strong> <code className="bg-black/30 px-1 rounded text-white">Ahmet, Yılmaz, 05551112233, 10, 500</code>
-                          </p>
-                      </div>
-                      <textarea 
-                          className="w-full h-64 bg-black/30 border border-white/10 rounded-xl p-4 text-sm text-white font-mono focus:outline-none focus:border-blue-500/50"
-                          placeholder={`Ahmet, Yılmaz, 05551234567, 8, 0\nAyşe, Demir, 05329876543, 12, 1000\n...`}
-                          value={importText}
-                          onChange={(e) => setImportText(e.target.value)}
-                      />
-                      <div className="flex justify-end gap-3">
-                          <button onClick={() => setShowImportModal(false)} className="px-6 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-white transition-colors">İptal</button>
-                          <button onClick={handleImport} className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold transition-colors flex items-center gap-2"><Upload size={16}/> Verileri Yükle</button>
-                      </div>
-                  </div>
-              </GlassCard>
-          </div>
-      )}
     </div>
   );
 }
