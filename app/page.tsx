@@ -11,10 +11,10 @@ import {
 // 1. TİP TANIMLAMALARI VE SABİTLER
 // ==========================================
 
-const apiKey = ""; // API anahtarı (Gerekirse)
+const apiKey = ""; 
 
-// LOGO AYARI
-const LOGO_URL = "https://via.placeholder.com/150/F43F5E/FFFFFF?text=VIVA+DA"; 
+// LOGO AYARI (public klasöründeki logo.jpeg dosyasını çeker)
+const LOGO_URL = "/logo.jpeg"; 
 
 // GİDER KATEGORİLERİ
 const EXPENSE_CATEGORIES = ['Kira', 'Reklam', 'Barikat', 'Genel Stüdyo', 'Faturalar', 'Diğer'];
@@ -128,22 +128,6 @@ const formatDate = (dateStr: string) => {
 
 const GoogleCalendarService = {
   createEvent: async (lesson: Partial<Lesson>, members: Member[], trainer: Trainer | undefined) => {
-    const attendees = [
-      { email: COMPANY_CALENDAR_EMAIL, displayName: 'VIVA DA PILATES', responseStatus: 'accepted' }, 
-      ...(trainer?.email ? [{ email: trainer.email, displayName: `${trainer.firstName} ${trainer.lastName} (Eğitmen)` }] : []),
-      ...members.filter(m => m.email).map(m => ({ email: m.email, displayName: `${m.firstName} ${m.lastName}` }))
-    ];
-
-    const event = {
-      summary: lesson.title, 
-      location: FIXED_LOCATION, 
-      description: `Eğitmen: ${trainer?.firstName} ${trainer?.lastName}\nKatılımcılar: ${members.map(m => m.firstName).join(', ')}`,
-      start: { dateTime: `${lesson.date}T${lesson.startTime}:00`, timeZone: 'Europe/Istanbul' },
-      end: { dateTime: `${lesson.date}T${lesson.endTime}:00`, timeZone: 'Europe/Istanbul' },
-      attendees: attendees,
-    };
-
-    console.log("🚀 GOOGLE CALENDAR API REQUEST:", event);
     return new Promise<{ eventId: string, status: string }>((resolve) => {
       setTimeout(() => { resolve({ eventId: `gcal_${generateId()}`, status: 'confirmed' }); }, 500); 
     });
@@ -244,6 +228,172 @@ function EmptyState({ message }: { message: string }) {
 // ==========================================
 // 4. ALT SAYFALAR (VIEW COMPONENTS)
 // ==========================================
+
+// --- MEMBERS VIEW (EKSİK OLAN PARÇA EKLENDİ) ---
+function MembersView({ members, setMembers, packages, setTransactions }: any) {
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [formData, setFormData] = useState<Partial<Member>>({});
+  const [searchTerm, setSearchTerm] = useState("");
+
+  const handleAddMember = (e: React.FormEvent) => {
+    e.preventDefault();
+    const selectedPackage = packages.find((p: PilatesPackage) => p.id === formData.packageId);
+    
+    const newMember: Member = {
+      id: generateId(),
+      firstName: formData.firstName || "",
+      lastName: formData.lastName || "",
+      phone: formData.phone || "",
+      email: formData.email || "",
+      birthDate: formData.birthDate || "",
+      healthNotes: formData.healthNotes || "",
+      packageId: formData.packageId || "",
+      packageName: selectedPackage?.name || "Paketsiz",
+      remainingSessions: selectedPackage?.sessionCount || 0,
+      totalSessionsPaid: selectedPackage?.sessionCount || 0,
+      pricePaid: selectedPackage?.price || 0,
+      debt: 0,
+      createdAt: new Date().toISOString()
+    };
+
+    setMembers([...members, newMember]);
+    
+    // Gelir olarak ekle
+    if (selectedPackage && selectedPackage.price > 0) {
+      setTransactions((prev: Transaction[]) => [...prev, {
+        id: generateId(),
+        date: new Date().toISOString(),
+        type: 'INCOME',
+        category: 'MEMBER_PAYMENT',
+        description: `Üyelik: ${newMember.firstName} ${newMember.lastName} (${selectedPackage.name})`,
+        amount: selectedPackage.price,
+        isPaid: true
+      }]);
+    }
+
+    setShowAddModal(false);
+    setFormData({});
+  };
+
+  const filteredMembers = members.filter((m: Member) => 
+    (m.firstName + ' ' + m.lastName).toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h1 className="text-3xl font-light text-white">Üye Listesi</h1>
+        <PrimaryButton onClick={() => setShowAddModal(true)} className="px-6 flex items-center gap-2">
+          <Plus size={18} /> Yeni Üye Ekle
+        </PrimaryButton>
+      </div>
+
+      <div className="flex gap-4">
+        <div className="relative flex-1">
+          <input 
+            type="text" 
+            placeholder="İsim veya telefon ile ara..." 
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full bg-white/5 border border-white/10 rounded-2xl px-12 py-3 text-white focus:outline-none focus:border-rose-500/50"
+          />
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30" size={20} />
+        </div>
+      </div>
+
+      <GlassCard className="overflow-hidden">
+        <table className="w-full text-left">
+          <thead className="bg-white/5 text-white/40 text-xs font-bold uppercase tracking-widest">
+            <tr>
+              <th className="p-4">Ad Soyad</th>
+              <th className="p-4">Paket / Durum</th>
+              <th className="p-4">Kalan Ders</th>
+              <th className="p-4">Telefon</th>
+              <th className="p-4 text-center">İşlem</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {filteredMembers.map((member: Member) => (
+              <tr key={member.id} className="hover:bg-white/[0.02] transition-colors">
+                <td className="p-4">
+                  <div className="font-medium text-white">{member.firstName} {member.lastName}</div>
+                  <div className="text-xs text-white/40">{member.healthNotes ? '⚠️ ' + member.healthNotes : 'Sağlık notu yok'}</div>
+                </td>
+                <td className="p-4">
+                  <div className="text-sm text-white/80">{member.packageName}</div>
+                </td>
+                <td className="p-4">
+                   <span className={`px-2 py-1 rounded text-xs font-bold ${member.remainingSessions <= 2 ? 'bg-rose-500/20 text-rose-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+                     {member.remainingSessions}
+                   </span>
+                </td>
+                <td className="p-4 text-white/60 text-sm">{member.phone}</td>
+                <td className="p-4 text-center">
+                  <button onClick={() => { if(confirm('Silmek istediğinize emin misiniz?')) setMembers(members.filter((m:Member) => m.id !== member.id)) }} className="text-rose-400 hover:text-rose-300 p-2">
+                    <Trash2 size={16} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {filteredMembers.length === 0 && <div className="p-8 text-center text-white/30">Üye bulunamadı.</div>}
+      </GlassCard>
+
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <GlassCard className="w-full max-w-lg bg-[#1c1c1e] border-white/10">
+            <div className="p-6 border-b border-white/5 flex justify-between items-center">
+              <h3 className="text-xl font-light text-white">Yeni Üye Kaydı</h3>
+              <button onClick={() => setShowAddModal(false)}><X className="text-white/50 hover:text-white" /></button>
+            </div>
+            <form onSubmit={handleAddMember} className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-xs text-white/50 ml-3">Ad *</label>
+                  <PillInput required value={formData.firstName || ''} onChange={e => setFormData({...formData, firstName: e.target.value})} />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs text-white/50 ml-3">Soyad *</label>
+                  <PillInput required value={formData.lastName || ''} onChange={e => setFormData({...formData, lastName: e.target.value})} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-xs text-white/50 ml-3">Telefon</label>
+                  <PillInput value={formData.phone || ''} onChange={e => setFormData({...formData, phone: e.target.value})} />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs text-white/50 ml-3">Doğum Tarihi</label>
+                  <PillInput type="date" value={formData.birthDate || ''} onChange={e => setFormData({...formData, birthDate: e.target.value})} />
+                </div>
+              </div>
+              <div className="space-y-2">
+                 <label className="text-xs text-white/50 ml-3">Paket Seçimi *</label>
+                 <PillSelect required value={formData.packageId || ''} onChange={e => setFormData({...formData, packageId: e.target.value})}>
+                   <option value="">Paket Seçiniz...</option>
+                   {packages.map((p: PilatesPackage) => (
+                     <option key={p.id} value={p.id}>{p.name} ({p.sessionCount} Ders - {p.price} TL)</option>
+                   ))}
+                 </PillSelect>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs text-white/50 ml-3">Sağlık Notları</label>
+                <textarea 
+                  className="w-full bg-black/20 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder-white/30 focus:outline-none focus:border-rose-400/50" 
+                  rows={3}
+                  value={formData.healthNotes || ''} 
+                  onChange={e => setFormData({...formData, healthNotes: e.target.value})}
+                />
+              </div>
+              <PrimaryButton className="w-full mt-4">Kaydet</PrimaryButton>
+            </form>
+          </GlassCard>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // --- PACKAGES VIEW ---
 function PackagesView({ packages, setPackages }: { packages: PilatesPackage[], setPackages: any }) {
