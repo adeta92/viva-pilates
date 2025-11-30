@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Calendar, Users, DollarSign, UserCog, LogOut, 
   Plus, Trash2, Check, X, ChevronLeft, ChevronRight, 
-  Search, AlertCircle, Menu, Wallet, HeartPulse, CreditCard, RefreshCcw, Phone, Mail, Box, Pencil, ExternalLink, CalendarCheck, TrendingUp, Calculator, Upload, FileText, RotateCcw 
+  Search, AlertCircle, Menu, Wallet, HeartPulse, CreditCard, RefreshCcw, Phone, Mail, Box, Pencil, ExternalLink, CalendarCheck, TrendingUp, Calculator, Upload, FileText, RotateCcw, Sparkles, Loader2 
 } from 'lucide-react';
 
 // ==========================================
@@ -126,7 +126,30 @@ const formatDate = (dateStr: string) => {
   return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });
 };
 
-// --- GOOGLE CALENDAR LINK JENERATÖRÜ ---
+const GoogleCalendarService = {
+  createEvent: async (lesson: Partial<Lesson>, members: Member[], trainer: Trainer | undefined) => {
+    const attendees = [
+      { email: COMPANY_CALENDAR_EMAIL, displayName: 'VIVA DA PILATES', responseStatus: 'accepted' }, 
+      ...(trainer?.email ? [{ email: trainer.email, displayName: `${trainer.firstName} ${trainer.lastName} (Eğitmen)` }] : []),
+      ...members.filter(m => m.email).map(m => ({ email: m.email, displayName: `${m.firstName} ${m.lastName}` }))
+    ];
+
+    const event = {
+      summary: lesson.title, 
+      location: FIXED_LOCATION, 
+      description: `Eğitmen: ${trainer?.firstName} ${trainer?.lastName}\nKatılımcılar: ${members.map(m => m.firstName).join(', ')}`,
+      start: { dateTime: `${lesson.date}T${lesson.startTime}:00`, timeZone: 'Europe/Istanbul' },
+      end: { dateTime: `${lesson.date}T${lesson.endTime}:00`, timeZone: 'Europe/Istanbul' },
+      attendees: attendees,
+    };
+
+    console.log("🚀 GOOGLE CALENDAR API REQUEST:", event);
+    return new Promise<{ eventId: string, status: string }>((resolve) => {
+      setTimeout(() => { resolve({ eventId: `gcal_${generateId()}`, status: 'confirmed' }); }, 500); 
+    });
+  }
+};
+
 const openGoogleCalendar = (lesson: Partial<Lesson>, members: Member[], trainer: Trainer | undefined) => {
   const startStr = (lesson.date + 'T' + lesson.startTime + ':00').replace(/[-:]/g, '');
   const endStr = (lesson.date + 'T' + lesson.endTime + ':00').replace(/[-:]/g, '');
@@ -510,88 +533,6 @@ function LessonsView({ lessons, setLessons, members, trainers, toggleLessonStatu
       </div><div className="pt-6 border-t border-white/10">{selectedLesson.isCompleted ? (<PrimaryButton onClick={handleToggleComplete} className="w-full bg-slate-700 hover:bg-slate-600"><RefreshCcw size={18} /> Geri Al (Tamamlanmadı Yap)</PrimaryButton>) : (<PrimaryButton onClick={handleToggleComplete} className="w-full bg-emerald-600 hover:bg-emerald-700"><Check size={18} /> Dersi Tamamla & Bakiyeden Düş</PrimaryButton>)}<p className="text-[10px] text-white/30 text-center mt-3">{selectedLesson.isCompleted ? "Geri alındığında üyeye ders hakkı iade edilir ve hoca ödemesi iptal edilir." : "Ders tamamlandığında üyeden 1 ders düşülür ve hocaya hakediş yazılır."}</p></div></div>) : (
       <form onSubmit={handleSubmit} className="p-6 space-y-4"><div className="space-y-2"><label className="text-xs text-white/50 ml-3">Eğitmen</label><PillSelect required value={formData.trainerId} onChange={e => setFormData({...formData, trainerId: e.target.value})}><option value="">Seçiniz...</option>{trainers.map((t: Trainer) => <option key={t.id} value={t.id}>{t.firstName} {t.lastName}</option>)}</PillSelect></div><div className="space-y-2"><label className="text-xs text-white/50 ml-3">Ders Tipi</label><PillSelect required value={formData.type} onChange={e => setFormData({...formData, type: e.target.value as any})}><option value="mat">Mat Pilates</option><option value="reformer">Reformer</option><option value="pregnant">Hamile Pilatesi</option><option value="group">Grup Ders</option></PillSelect></div>{formData.type === 'group' ? (<div className="space-y-2 animate-in fade-in"><label className="text-xs text-white/50 ml-3">Grup Seçimi</label><PillSelect required value={formData.groupId} onChange={e => { const selectedG = uniqueGroups.find((g: any) => g.id === e.target.value); setFormData({...formData, groupId: selectedG?.id, groupName: selectedG?.name}); }}><option value="">Grup Seçiniz...</option>{uniqueGroups.map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}</PillSelect></div>) : (<div className="space-y-2 animate-in fade-in"><label className="text-xs text-white/50 ml-3">Üye</label><PillSelect required value={formData.memberIds?.[0] || ''} onChange={e => setFormData({...formData, memberIds: [e.target.value]})}><option value="">Seçiniz...</option>{members.filter((m: Member) => !m.groupId).map((m: Member) => <option key={m.id} value={m.id}>{m.firstName} {m.lastName} ({m.remainingSessions} hak)</option>)}</PillSelect></div>)}<PrimaryButton type="submit" disabled={isSyncing} className="w-full mt-4">Kaydet ve Takvime Ekle</PrimaryButton></form>)}</GlassCard></div>
       )}
-    </div>
-  );
-}
-
-// --- MEMBERS VIEW ---
-function MembersView({ members, setMembers, packages, setTransactions }: any) {
-  const [showModal, setShowModal] = useState(false);
-  const [showGroupModal, setShowGroupModal] = useState(false);
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [showImportModal, setShowImportModal] = useState(false); 
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterType, setFilterType] = useState<'ALL' | 'GROUP'>('ALL');
-  const [formData, setFormData] = useState<Partial<Member>>({});
-  const [groupFormData, setGroupFormData] = useState({ name: '', packageId: '', members: [] as { firstName: string, lastName: string, phone: string, email: string }[] });
-  const [newGroupMember, setNewGroupMember] = useState({ firstName: '', lastName: '', phone: '', email: '' });
-  const [paymentData, setPaymentData] = useState<{memberId: string, amount: string, description: string}>({ memberId: '', amount: '', description: 'Bakiye Yükleme' });
-  const [importText, setImportText] = useState(''); 
-
-  const filteredMembers = members.filter((m: Member) => { const matchesSearch = (m.firstName + ' ' + m.lastName + ' ' + (m.groupName || '')).toLowerCase().includes(searchTerm.toLowerCase()); const matchesType = filterType === 'ALL' || (filterType === 'GROUP' && m.groupName); return matchesSearch && matchesType; });
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (formData.id) {
-      setMembers(members.map((m: Member) => m.id === formData.id ? { ...m, ...formData } as Member : m));
-    } else {
-      const selectedPkg = packages.find((p: any) => p.id === formData.packageId);
-      const newMember = { ...formData, id: generateId(), createdAt: new Date().toISOString(), debt: formData.debt || 0, remainingSessions: formData.remainingSessions || selectedPkg?.sessionCount || 0, totalSessionsPaid: formData.totalSessionsPaid || selectedPkg?.sessionCount || 0, packageName: selectedPkg?.name || 'Özel' } as Member;
-      setMembers([...members, newMember]);
-      if (newMember.pricePaid && newMember.pricePaid > 0) {
-        setTransactions((prev: any) => [...prev, { id: generateId(), date: new Date().toISOString(), type: 'INCOME', category: 'MEMBER_PAYMENT', description: `Yeni Kayıt: ${newMember.firstName} ${newMember.lastName} (${newMember.packageName})`, amount: newMember.pricePaid, relatedId: newMember.id, isPaid: true }]);
-      }
-    }
-    setShowModal(false); setFormData({});
-  };
-
-  const handleImport = () => {
-    if (!importText.trim()) return;
-    const lines = importText.trim().split('\n');
-    const newMembers: Member[] = [];
-    lines.forEach(line => {
-        const parts = line.split(',').map(s => s.trim());
-        if (parts.length >= 5) {
-            newMembers.push({
-                id: generateId(), firstName: parts[0], lastName: parts[1], phone: parts[2], email: '', birthDate: '', healthNotes: 'Toplu yükleme ile eklendi', packageId: 'imported', packageName: 'Dışarıdan Yükleme', remainingSessions: parseInt(parts[3]) || 0, totalSessionsPaid: 0, pricePaid: 0, debt: parseFloat(parts[4]) || 0, createdAt: new Date().toISOString()
-            });
-        }
-    });
-    if (newMembers.length > 0) { setMembers([...members, ...newMembers]); alert(`${newMembers.length} üye başarıyla eklendi.`); setShowImportModal(false); setImportText(''); } else { alert("Hatalı format. Lütfen kontrol edip tekrar deneyin."); }
-  };
-
-  const handleGroupSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!groupFormData.name || !groupFormData.packageId || groupFormData.members.length === 0) { alert("Lütfen grup adı, paket seçimi ve en az bir üye ekleyin."); return; }
-    const selectedPkg = packages.find((p: any) => p.id === groupFormData.packageId);
-    const groupId = generateId();
-    const newMembers = groupFormData.members.map(gm => ({ id: generateId(), firstName: gm.firstName, lastName: gm.lastName, phone: gm.phone, email: gm.email, birthDate: '', healthNotes: '', packageId: selectedPkg?.id, packageName: selectedPkg?.name, packageType: 'GROUP', groupId: groupId, groupName: groupFormData.name, remainingSessions: selectedPkg?.sessionCount || 0, totalSessionsPaid: selectedPkg?.sessionCount || 0, pricePaid: selectedPkg?.price || 0, debt: selectedPkg?.price || 0, createdAt: new Date().toISOString() }));
-    setMembers([...members, ...newMembers]);
-    setShowGroupModal(false); setGroupFormData({ name: '', packageId: '', members: [] });
-  };
-
-  const addMemberToGroupList = () => { if (newGroupMember.firstName && newGroupMember.lastName) { if (groupFormData.members.length >= 12) { alert("Maksimum 12 kişilik grup oluşturabilirsiniz."); return; } setGroupFormData({ ...groupFormData, members: [...groupFormData.members, newGroupMember] }); setNewGroupMember({ firstName: '', lastName: '', phone: '', email: '' }); } };
-
-  const handlePaymentSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const amount = parseFloat(paymentData.amount);
-    if (!amount || amount <= 0) return;
-    const payer = members.find((m: Member) => m.id === paymentData.memberId);
-    const payerGroupId = payer?.groupId;
-    setMembers(members.map((m: Member) => { if (m.id === paymentData.memberId || (payerGroupId && m.groupId === payerGroupId)) { return { ...m, debt: m.debt - amount }; } return m; }));
-    setTransactions((prev: any) => [...prev, { id: generateId(), date: new Date().toISOString(), type: 'INCOME', category: 'MEMBER_PAYMENT', description: `Ödeme: ${payer?.firstName} ${payer?.lastName} ${payerGroupId ? '(Grup Ödemesi)' : ''} - ${paymentData.description}`, amount: amount, relatedId: paymentData.memberId, isPaid: true }]);
-    setShowPaymentModal(false); setPaymentData({ memberId: '', amount: '', description: 'Bakiye Yükleme' });
-  };
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-end md:items-center gap-4"><div className="flex items-center gap-4"><h1 className="text-3xl font-light text-white">Üyeler</h1><div className="bg-black/30 p-1 rounded-xl flex gap-1"><button onClick={() => setFilterType('ALL')} className={`px-4 py-2 rounded-lg text-sm transition-colors ${filterType === 'ALL' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Tümü</button><button onClick={() => setFilterType('GROUP')} className={`px-4 py-2 rounded-lg text-sm transition-colors ${filterType === 'GROUP' ? 'bg-white/10 text-white' : 'text-white/40'}`}>Gruplar</button></div></div><div className="flex gap-2"><PrimaryButton onClick={() => setShowImportModal(true)} className="px-6 bg-blue-600 hover:bg-blue-700"><Upload size={18} /> Toplu Yükle</PrimaryButton><PrimaryButton onClick={() => { setFormData({}); setShowModal(true); }} className="px-6 bg-slate-700 hover:bg-slate-600"><Plus size={18} /> Yeni Üye</PrimaryButton><PrimaryButton onClick={() => { setShowGroupModal(true); }} className="px-6 bg-purple-600 hover:bg-purple-700 shadow-purple-900/20"><Users size={18} /> Grup</PrimaryButton></div></div>
-      <GlassCard className="p-2 flex items-center gap-4"><div className="relative flex-1"><Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30" size={20} /><input type="text" placeholder="İsim veya grup adı ara..." className="w-full bg-transparent border-none text-white placeholder-white/30 pl-12 focus:ring-0 text-lg h-12" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} /></div></GlassCard>
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">{filteredMembers.map((member: Member) => ( <GlassCard key={member.id} className="p-6 group hover:bg-white/[0.07] transition-all cursor-default relative overflow-hidden"><div className="flex justify-between items-start mb-4"><div className="flex items-center gap-3"><div className="w-12 h-12 rounded-full bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center text-white border border-white/10">{member.firstName.charAt(0)}</div>{member.groupName && (<div className="px-2 py-1 bg-purple-500/20 rounded border border-purple-500/30 text-purple-200 text-xs font-bold uppercase tracking-wider">{member.groupName}</div>)}</div><div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"><IconButton onClick={() => { setPaymentData({ memberId: member.id, amount: '', description: 'Bakiye Yükleme' }); setShowPaymentModal(true); }} className="text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/20"><CreditCard size={18} /></IconButton><IconButton onClick={() => { setFormData(member); setShowModal(true); }}><UserCog size={18} /></IconButton><IconButton onClick={() => { if (confirm('Silinsin mi?')) setMembers(members.filter((m: Member) => m.id !== member.id)); }} className="text-red-400 hover:text-red-300 hover:bg-red-500/20"><Trash2 size={18} /></IconButton></div></div><h3 className="text-xl font-medium text-white">{member.firstName} {member.lastName}</h3><div className="text-white/40 text-sm mb-4 space-y-1"><p>{member.phone}</p>{member.email && <p className="text-xs text-white/20">{member.email}</p>}</div>{member.healthNotes && <div className="bg-amber-500/10 text-amber-300 text-xs p-3 rounded-xl mb-4 border border-amber-500/10 flex gap-2"><AlertCircle size={14} className="shrink-0" /> {member.healthNotes}</div>}<div className="grid grid-cols-2 gap-3 mt-4"><div className="bg-black/20 p-3 rounded-2xl text-center"><p className="text-[10px] text-white/30 uppercase tracking-widest mb-1">Kalan Hak</p><span className={`text-xl font-light ${member.remainingSessions <= 2 ? 'text-rose-400' : 'text-emerald-400'}`}>{member.remainingSessions}</span></div><div className="bg-black/20 p-3 rounded-2xl text-center relative overflow-hidden"><p className="text-[10px] text-white/30 uppercase tracking-widest mb-1">{member.debt > 0 ? 'Borç' : member.debt < 0 ? 'Bakiye' : 'Durum'}</p><span className={`text-xl font-light ${member.debt > 0 ? 'text-rose-400' : member.debt < 0 ? 'text-emerald-400' : 'text-white/50'}`}>{member.debt > 0 ? `${member.debt} ₺` : member.debt < 0 ? `+${Math.abs(member.debt)} ₺` : '-'}</span></div></div><div className="mt-4 text-center"><span className="text-xs text-white/20 bg-white/5 px-3 py-1 rounded-full">{member.packageName || 'Standart'}</span></div></GlassCard>))}</div>
-      {showModal && ( <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"><GlassCard className="w-full max-w-2xl max-h-[90vh] overflow-y-auto border-white/10 bg-[#1c1c1e]"><div className="p-8 border-b border-white/5 flex justify-between items-center"><h3 className="text-2xl font-light text-white">Bireysel Üye Ekle</h3><button onClick={() => setShowModal(false)}><X className="text-white/50 hover:text-white" /></button></div><form onSubmit={handleSubmit} className="p-8 space-y-8"><section><div className="grid grid-cols-1 md:grid-cols-2 gap-6"><PillInput required value={formData.firstName || ''} onChange={e => setFormData({...formData, firstName: e.target.value})} placeholder="Ad" /><PillInput required value={formData.lastName || ''} onChange={e => setFormData({...formData, lastName: e.target.value})} placeholder="Soyad" /><PillInput required value={formData.phone || ''} onChange={e => setFormData({...formData, phone: e.target.value})} placeholder="Telefon" /><PillInput value={formData.email || ''} onChange={e => setFormData({...formData, email: e.target.value})} placeholder="E-posta" /><PillInput type="date" required value={formData.birthDate || ''} onChange={e => setFormData({...formData, birthDate: e.target.value})} className="md:col-span-2" /></div><textarea className="w-full bg-black/20 border border-white/10 rounded-3xl px-6 py-4 text-white placeholder-white/30 focus:outline-none mt-6 min-h-[100px]" placeholder="Sağlık Notları" value={formData.healthNotes || ''} onChange={e => setFormData({...formData, healthNotes: e.target.value})} /></section><section className="pt-6 border-t border-white/10"><label className="text-sm text-white/60 ml-3 mb-2 block">Paket Seçimi</label><div className="grid grid-cols-1 gap-6"><PillSelect required value={formData.packageId || ''} onChange={e => { const pkg = packages.find((p: any) => p.id === e.target.value); setFormData({...formData, packageId: e.target.value, pricePaid: pkg?.price, debt: pkg?.price, totalSessionsPaid: pkg?.sessionCount, remainingSessions: pkg?.sessionCount }); }}><option value="">Paket Seçiniz...</option>{packages.filter((p: any) => p.type !== 'GROUP').map((p: any) => <option key={p.id} value={p.id}>{p.name} - {p.price} ₺</option>)}</PillSelect><div className="grid grid-cols-2 gap-6"><PillInput type="number" placeholder="Alınan Ücret" value={formData.pricePaid || ''} onChange={e => setFormData({...formData, pricePaid: parseFloat(e.target.value)})} /><PillInput type="number" placeholder="Kalan Borç" value={formData.debt || 0} onChange={e => setFormData({...formData, debt: parseFloat(e.target.value)})} /></div></div></section><div className="pt-6 flex justify-end gap-4"><PrimaryButton type="submit" className="px-10">Kaydı Tamamla</PrimaryButton></div></form></GlassCard></div> )}
-      {showGroupModal && (<div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"><GlassCard className="w-full max-w-2xl max-h-[90vh] overflow-y-auto border-white/10 bg-[#1c1c1e]"><div className="p-8 border-b border-white/5 flex justify-between items-center bg-purple-900/20"><div><h3 className="text-2xl font-light text-white">Grup Oluştur</h3><p className="text-white/40 text-sm">Grup üyelerini tek seferde ekleyin</p></div><button onClick={() => setShowGroupModal(false)}><X className="text-white/50 hover:text-white" /></button></div><form onSubmit={handleGroupSubmit} className="p-8 space-y-8"><section className="grid grid-cols-1 md:grid-cols-2 gap-6"><div className="space-y-2"><label className="text-sm text-white/60 ml-3">Grup Adı</label><PillInput required value={groupFormData.name} onChange={e => setGroupFormData({...groupFormData, name: e.target.value})} placeholder="Örn: Salı Ekibi" /></div><div className="space-y-2"><label className="text-sm text-white/60 ml-3">Grup Paketi</label><PillSelect required value={groupFormData.packageId} onChange={e => setGroupFormData({...groupFormData, packageId: e.target.value})}><option value="">Paket Seçiniz...</option>{packages.filter((p: any) => p.type === 'GROUP').map((p: any) => <option key={p.id} value={p.id}>{p.name} - {p.price} ₺ (Kişi Başı)</option>)}</PillSelect></div></section><section className="bg-black/20 p-6 rounded-3xl border border-white/5"><h4 className="text-white/80 font-medium mb-4 flex items-center justify-between"><span>Grup Üyeleri ({groupFormData.members.length}/12)</span></h4><div className="grid grid-cols-1 md:grid-cols-12 gap-3 mb-4 items-center"><div className="md:col-span-2"><PillInput placeholder="Ad" value={newGroupMember.firstName} onChange={e => setNewGroupMember({...newGroupMember, firstName: e.target.value})} className="h-10 text-sm px-3" /></div><div className="md:col-span-2"><PillInput placeholder="Soyad" value={newGroupMember.lastName} onChange={e => setNewGroupMember({...newGroupMember, lastName: e.target.value})} className="h-10 text-sm px-3" /></div><div className="md:col-span-3"><PillInput placeholder="Tel" value={newGroupMember.phone} onChange={e => setNewGroupMember({...newGroupMember, phone: e.target.value})} className="h-10 text-sm px-3" /></div><div className="md:col-span-3"><PillInput placeholder="E-posta" type="email" value={newGroupMember.email} onChange={e => setNewGroupMember({...newGroupMember, email: e.target.value})} className="h-10 text-sm px-3" /></div><div className="md:col-span-2"><button type="button" onClick={addMemberToGroupList} className="w-full h-10 bg-white/10 hover:bg-white/20 rounded-xl text-white text-sm font-medium transition-colors border border-white/10">+ Ekle</button></div></div><div className="space-y-2 max-h-[200px] overflow-y-auto custom-scrollbar">{groupFormData.members.map((m, idx) => (<div key={idx} className="flex items-center justify-between bg-white/5 p-3 rounded-xl border border-white/5"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-purple-500/20 text-purple-300 flex items-center justify-center text-xs font-bold">{idx + 1}</div><div><p className="text-sm text-white font-medium">{m.firstName} {m.lastName}</p><div className="flex items-center gap-2 text-xs text-white/40"><span>{m.phone}</span>{m.email && <span className="w-1 h-1 bg-white/20 rounded-full" />}{m.email && <span>{m.email}</span>}</div></div></div><button type="button" onClick={() => setGroupFormData({...groupFormData, members: groupFormData.members.filter((_, i) => i !== idx)})} className="text-white/20 hover:text-red-400"><X size={16} /></button></div>))}{groupFormData.members.length === 0 && <p className="text-white/20 text-sm text-center py-4">Henüz üye eklenmedi.</p>}</div></section><div className="pt-6 flex justify-end gap-4 border-t border-white/10"><PrimaryButton type="submit" className="px-10 bg-purple-600 hover:bg-purple-700">Grubu Kaydet</PrimaryButton></div></form></GlassCard></div>)}
-      {/* ... ÖDEME MODALI ... */}
-      {showPaymentModal && (<div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"><GlassCard className="w-full max-w-md bg-[#1c1c1e] border-white/10 shadow-2xl"><div className="p-6 border-b border-white/5 flex justify-between items-center"><h3 className="text-xl font-light text-white">Ödeme Al</h3><button onClick={() => setShowPaymentModal(false)}><X className="text-white/50 hover:text-white" /></button></div><form onSubmit={handlePaymentSubmit} className="p-6 space-y-6"><PillInput type="number" autoFocus value={paymentData.amount} onChange={e => setPaymentData({...paymentData, amount: e.target.value})} placeholder="Tutar (₺)" /><PillInput value={paymentData.description} onChange={e => setPaymentData({...paymentData, description: e.target.value})} placeholder="Açıklama" /><PrimaryButton type="submit" className="w-full">Ödemeyi Onayla</PrimaryButton></form></GlassCard></div>)}
     </div>
   );
 }
