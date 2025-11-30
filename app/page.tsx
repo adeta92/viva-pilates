@@ -14,7 +14,7 @@ import {
 const apiKey = ""; 
 
 // LOGO AYARI (public klasöründeki logo.jpeg dosyasını çeker)
-const LOGO_URL = "/logo.jpeg"; 
+const LOGO_URL = "/logo.jpg"; 
 
 // GİDER KATEGORİLERİ
 const EXPENSE_CATEGORIES = ['Kira', 'Reklam', 'Barikat', 'Genel Stüdyo', 'Faturalar', 'Diğer'];
