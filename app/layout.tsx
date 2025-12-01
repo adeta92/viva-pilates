@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
-import "./globals.css"; // BU SATIR EKSİKTİ, ARTIK VAR ✅
+import "./globals.css"; // ARTIK BU SATIR AKTİF ✅
 
 const inter = Inter({ subsets: ["latin"] });
 
