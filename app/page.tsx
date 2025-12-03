@@ -4,19 +4,15 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Calendar, Users, DollarSign, UserCog, LogOut, 
   Plus, Trash2, Check, X, ChevronLeft, ChevronRight, 
-  Search, AlertCircle, Menu, Wallet, HeartPulse, CreditCard, RefreshCcw, Phone, Mail, Box, Pencil, ExternalLink, CalendarCheck, TrendingUp, Calculator, Upload, FileText, RotateCcw, Sparkles, Loader2 
+  Search, AlertCircle, Menu, Wallet, HeartPulse, CreditCard, RefreshCcw, Phone, Mail, Box, Pencil, ExternalLink, CalendarCheck, TrendingUp, Calculator, Upload, FileText, RotateCcw, Sparkles, Loader2, Users2, Download
 } from 'lucide-react';
 
 // ==========================================
 // 1. TİP TANIMLAMALARI VE SABİTLER
 // ==========================================
 
-const apiKey = ""; 
-
-// LOGO AYARI (public klasöründeki logo.jpeg dosyasını çeker)
 const LOGO_URL = "/logo.jpg"; 
 
-// GİDER KATEGORİLERİ
 const EXPENSE_CATEGORIES = ['Kira', 'Reklam', 'Barikat', 'Genel Stüdyo', 'Faturalar', 'Diğer'];
 
 type UserRole = 'ADMIN' | 'STAFF';
@@ -43,15 +39,18 @@ interface Member {
   email: string;
   birthDate: string;
   healthNotes: string;
-  packageId: string; 
-  packageName: string;
-  remainingSessions: number;
-  totalSessionsPaid: number;
-  pricePaid: number;
-  debt: number; 
-  groupId?: string;
+  packageName: string;       // Son alınan paket adı
+  remainingSessions: number; // Toplam kalan ders hakkı
+  balance: number;           // Cüzdan Bakiyesi (+ Alacak, - Borç)
+  groupId?: string;          // Bağlı olduğu grup ID'si
   groupName?: string;
   createdAt: string;
+}
+
+interface Group {
+  id: string;
+  name: string;
+  memberIds: string[];
 }
 
 interface Trainer {
@@ -77,14 +76,13 @@ interface Lesson {
   memberIds: string[];
   isCompleted: boolean;
   googleCalendarEventId?: string;
-  aiPlan?: string;
 }
 
 interface Transaction {
   id: string;
   date: string;
   type: 'INCOME' | 'EXPENSE';
-  category: 'LESSON_REVENUE' | 'TRAINER_PAYMENT' | 'MEMBER_PAYMENT' | 'OTHER' | string;
+  category: string;
   description: string;
   amount: number;
   relatedId?: string;
@@ -126,14 +124,6 @@ const formatDate = (dateStr: string) => {
   return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });
 };
 
-const GoogleCalendarService = {
-  createEvent: async (lesson: Partial<Lesson>, members: Member[], trainer: Trainer | undefined) => {
-    return new Promise<{ eventId: string, status: string }>((resolve) => {
-      setTimeout(() => { resolve({ eventId: `gcal_${generateId()}`, status: 'confirmed' }); }, 500); 
-    });
-  }
-};
-
 const openGoogleCalendar = (lesson: Partial<Lesson>, members: Member[], trainer: Trainer | undefined) => {
   const startStr = (lesson.date + 'T' + lesson.startTime + ':00').replace(/[-:]/g, '');
   const endStr = (lesson.date + 'T' + lesson.endTime + ':00').replace(/[-:]/g, '');
@@ -159,7 +149,7 @@ const openGoogleCalendar = (lesson: Partial<Lesson>, members: Member[], trainer:
 };
 
 // ==========================================
-// 3. UI BİLEŞENLERİ (Building Blocks)
+// 3. UI BİLEŞENLERİ
 // ==========================================
 
 function GlassCard({ children, className = "" }: { children: React.ReactNode, className?: string }) {
@@ -229,15 +219,29 @@ function EmptyState({ message }: { message: string }) {
 // 4. ALT SAYFALAR (VIEW COMPONENTS)
 // ==========================================
 
-// --- MEMBERS VIEW (EKSİK OLAN PARÇA EKLENDİ) ---
-function MembersView({ members, setMembers, packages, setTransactions }: any) {
+// --- MEMBERS & GROUPS VIEW ---
+function MembersView({ members, setMembers, packages, setTransactions, groups, setGroups }: any) {
+  const [activeTab, setActiveTab] = useState<'MEMBERS' | 'GROUPS' | 'IMPORT'>('MEMBERS');
   const [showAddModal, setShowAddModal] = useState(false);
-  const [formData, setFormData] = useState<Partial<Member>>({});
+  const [showTopUpModal, setShowTopUpModal] = useState<Member | null>(null);
+  const [showGroupModal, setShowGroupModal] = useState(false);
+  
+  // Üye Ekleme Formu State'i
+  const [formData, setFormData] = useState<any>({});
+  
+  // Toplu Yükleme State'i
+  const [importText, setImportText] = useState("");
+
   const [searchTerm, setSearchTerm] = useState("");
 
+  // --- ÜYE İŞLEMLERİ ---
   const handleAddMember = (e: React.FormEvent) => {
     e.preventDefault();
     const selectedPackage = packages.find((p: PilatesPackage) => p.id === formData.packageId);
+    
+    // Açılış bakiyesi hesaplama: Eğer ödeme alındıysa bakiye 0, alınmadıysa eksi bakiye
+    const isPaid = formData.isPaid === true;
+    const initialDebt = selectedPackage && !isPaid ? -selectedPackage.price : 0;
     
     const newMember: Member = {
       id: generateId(),
@@ -247,25 +251,22 @@ function MembersView({ members, setMembers, packages, setTransactions }: any) {
       email: formData.email || "",
       birthDate: formData.birthDate || "",
       healthNotes: formData.healthNotes || "",
-      packageId: formData.packageId || "",
       packageName: selectedPackage?.name || "Paketsiz",
-      remainingSessions: selectedPackage?.sessionCount || 0,
-      totalSessionsPaid: selectedPackage?.sessionCount || 0,
-      pricePaid: selectedPackage?.price || 0,
-      debt: 0,
+      remainingSessions: (selectedPackage?.sessionCount || 0) + (parseInt(formData.extraSessions) || 0),
+      balance: (parseFloat(formData.initialBalance) || 0) + initialDebt,
       createdAt: new Date().toISOString()
     };
 
     setMembers([...members, newMember]);
     
-    // Gelir olarak ekle
-    if (selectedPackage && selectedPackage.price > 0) {
+    // Gelir kaydı (Eğer ödeme alındıysa)
+    if (selectedPackage && isPaid) {
       setTransactions((prev: Transaction[]) => [...prev, {
         id: generateId(),
         date: new Date().toISOString(),
         type: 'INCOME',
         category: 'MEMBER_PAYMENT',
-        description: `Üyelik: ${newMember.firstName} ${newMember.lastName} (${selectedPackage.name})`,
+        description: `Yeni Üye: ${newMember.firstName} ${newMember.lastName} (${selectedPackage.name})`,
         amount: selectedPackage.price,
         isPaid: true
       }]);
@@ -275,6 +276,105 @@ function MembersView({ members, setMembers, packages, setTransactions }: any) {
     setFormData({});
   };
 
+  const handleTopUp = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!showTopUpModal) return;
+
+    const addedSessions = parseInt(formData.addSessions) || 0;
+    const addedBalance = parseFloat(formData.addBalance) || 0;
+    const paymentAmount = parseFloat(formData.paymentAmount) || 0;
+    const packageId = formData.packageId;
+    const selectedPackage = packages.find((p: PilatesPackage) => p.id === packageId);
+
+    let finalSessions = showTopUpModal.remainingSessions + addedSessions;
+    let finalBalance = showTopUpModal.balance + addedBalance; // Manuel bakiye ekleme
+
+    if (selectedPackage) {
+        finalSessions += selectedPackage.sessionCount;
+        // Paket ücreti kadar borçlandır, ödeme kadar alacaklandır
+        finalBalance = finalBalance - selectedPackage.price + paymentAmount;
+    } else {
+        // Sadece ödeme yapıldıysa bakiyeye ekle
+        finalBalance += paymentAmount; 
+    }
+
+    // Üyeyi güncelle
+    setMembers(members.map((m: Member) => m.id === showTopUpModal.id ? {
+        ...m,
+        remainingSessions: finalSessions,
+        balance: finalBalance,
+        packageName: selectedPackage ? selectedPackage.name : m.packageName
+    } : m));
+
+    // Gelir Ekle (Ödeme varsa)
+    if (paymentAmount > 0) {
+        setTransactions((prev: Transaction[]) => [...prev, {
+            id: generateId(),
+            date: new Date().toISOString(),
+            type: 'INCOME',
+            category: 'MEMBER_PAYMENT',
+            description: `Tahsilat: ${showTopUpModal.firstName} ${showTopUpModal.lastName}`,
+            amount: paymentAmount,
+            isPaid: true
+        }]);
+    }
+
+    setShowTopUpModal(null);
+    setFormData({});
+  };
+
+  // --- GRUP İŞLEMLERİ ---
+  const handleCreateGroup = (e: React.FormEvent) => {
+    e.preventDefault();
+    const newGroup: Group = {
+        id: generateId(),
+        name: formData.groupName,
+        memberIds: formData.selectedMembers || []
+    };
+    
+    setGroups([...groups, newGroup]);
+    
+    // Seçilen üyelerin grup bilgisini güncelle
+    if (newGroup.memberIds.length > 0) {
+        setMembers(members.map((m: Member) => 
+            newGroup.memberIds.includes(m.id) ? { ...m, groupId: newGroup.id, groupName: newGroup.name } : m
+        ));
+    }
+    
+    setShowGroupModal(false);
+    setFormData({});
+  };
+
+  // --- TOPLU YÜKLEME ---
+  const handleBulkImport = () => {
+    const lines = importText.split('\n');
+    const newMembers: Member[] = [];
+    
+    lines.forEach(line => {
+        const parts = line.split(','); // Basit CSV: Ad, Soyad, Telefon, Email, KalanDers, Bakiye
+        if (parts.length >= 2) {
+            newMembers.push({
+                id: generateId(),
+                firstName: parts[0]?.trim() || "",
+                lastName: parts[1]?.trim() || "",
+                phone: parts[2]?.trim() || "",
+                email: parts[3]?.trim() || "",
+                remainingSessions: parseInt(parts[4]) || 0,
+                balance: parseFloat(parts[5]) || 0,
+                packageName: 'Toplu Yükleme',
+                birthDate: '',
+                healthNotes: '',
+                createdAt: new Date().toISOString()
+            });
+        }
+    });
+
+    setMembers([...members, ...newMembers]);
+    setImportText("");
+    setActiveTab('MEMBERS');
+    alert(`${newMembers.length} üye başarıyla yüklendi!`);
+  };
+
   const filteredMembers = members.filter((m: Member) => 
     (m.firstName + ' ' + m.lastName).toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -282,115 +382,159 @@ function MembersView({ members, setMembers, packages, setTransactions }: any) {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-light text-white">Üye Listesi</h1>
-        <PrimaryButton onClick={() => setShowAddModal(true)} className="px-6 flex items-center gap-2">
-          <Plus size={18} /> Yeni Üye Ekle
-        </PrimaryButton>
-      </div>
-
-      <div className="flex gap-4">
-        <div className="relative flex-1">
-          <input 
-            type="text" 
-            placeholder="İsim veya telefon ile ara..." 
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-white/5 border border-white/10 rounded-2xl px-12 py-3 text-white focus:outline-none focus:border-rose-500/50"
-          />
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30" size={20} />
+        <h1 className="text-3xl font-light text-white">Üye & Grup Yönetimi</h1>
+        <div className="flex bg-white/10 rounded-lg p-1">
+            <button onClick={() => setActiveTab('MEMBERS')} className={`px-4 py-2 rounded-md text-sm transition-all ${activeTab === 'MEMBERS' ? 'bg-rose-600 text-white' : 'text-white/60 hover:text-white'}`}>Üyeler</button>
+            <button onClick={() => setActiveTab('GROUPS')} className={`px-4 py-2 rounded-md text-sm transition-all ${activeTab === 'GROUPS' ? 'bg-rose-600 text-white' : 'text-white/60 hover:text-white'}`}>Gruplar</button>
+            <button onClick={() => setActiveTab('IMPORT')} className={`px-4 py-2 rounded-md text-sm transition-all ${activeTab === 'IMPORT' ? 'bg-rose-600 text-white' : 'text-white/60 hover:text-white'}`}>Excel Yükle</button>
         </div>
       </div>
 
-      <GlassCard className="overflow-hidden">
-        <table className="w-full text-left">
-          <thead className="bg-white/5 text-white/40 text-xs font-bold uppercase tracking-widest">
-            <tr>
-              <th className="p-4">Ad Soyad</th>
-              <th className="p-4">Paket / Durum</th>
-              <th className="p-4">Kalan Ders</th>
-              <th className="p-4">Telefon</th>
-              <th className="p-4 text-center">İşlem</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-white/5">
-            {filteredMembers.map((member: Member) => (
-              <tr key={member.id} className="hover:bg-white/[0.02] transition-colors">
-                <td className="p-4">
-                  <div className="font-medium text-white">{member.firstName} {member.lastName}</div>
-                  <div className="text-xs text-white/40">{member.healthNotes ? '⚠️ ' + member.healthNotes : 'Sağlık notu yok'}</div>
-                </td>
-                <td className="p-4">
-                  <div className="text-sm text-white/80">{member.packageName}</div>
-                </td>
-                <td className="p-4">
-                   <span className={`px-2 py-1 rounded text-xs font-bold ${member.remainingSessions <= 2 ? 'bg-rose-500/20 text-rose-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
-                     {member.remainingSessions}
-                   </span>
-                </td>
-                <td className="p-4 text-white/60 text-sm">{member.phone}</td>
-                <td className="p-4 text-center">
-                  <button onClick={() => { if(confirm('Silmek istediğinize emin misiniz?')) setMembers(members.filter((m:Member) => m.id !== member.id)) }} className="text-rose-400 hover:text-rose-300 p-2">
-                    <Trash2 size={16} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {filteredMembers.length === 0 && <div className="p-8 text-center text-white/30">Üye bulunamadı.</div>}
-      </GlassCard>
+      {activeTab === 'MEMBERS' && (
+        <>
+            <div className="flex gap-4">
+                <div className="relative flex-1">
+                <input type="text" placeholder="İsim, telefon veya e-posta ile ara..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-2xl px-12 py-3 text-white focus:outline-none focus:border-rose-500/50" />
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30" size={20} />
+                </div>
+                <PrimaryButton onClick={() => setShowAddModal(true)} className="px-6 flex items-center gap-2"><Plus size={18} /> Üye Ekle</PrimaryButton>
+            </div>
 
+            <GlassCard className="overflow-hidden">
+                <table className="w-full text-left">
+                <thead className="bg-white/5 text-white/40 text-xs font-bold uppercase tracking-widest">
+                    <tr>
+                    <th className="p-4">Ad Soyad</th>
+                    <th className="p-4">İletişim</th>
+                    <th className="p-4">Paket / Grup</th>
+                    <th className="p-4">Kalan Ders</th>
+                    <th className="p-4">Bakiye</th>
+                    <th className="p-4 text-center">İşlem</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                    {filteredMembers.map((member: Member) => (
+                    <tr key={member.id} className="hover:bg-white/[0.02] transition-colors">
+                        <td className="p-4"><div className="font-medium text-white">{member.firstName} {member.lastName}</div><div className="text-xs text-white/40">{member.healthNotes}</div></td>
+                        <td className="p-4"><div className="text-sm text-white/80">{member.phone}</div><div className="text-xs text-white/40">{member.email}</div></td>
+                        <td className="p-4"><div className="text-sm text-white/80">{member.packageName}</div><div className="text-xs text-rose-400">{member.groupName}</div></td>
+                        <td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold ${member.remainingSessions <= 2 ? 'bg-rose-500/20 text-rose-400' : 'bg-emerald-500/20 text-emerald-400'}`}>{member.remainingSessions}</span></td>
+                        <td className="p-4"><span className={`font-mono ${member.balance < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>{member.balance} ₺</span></td>
+                        <td className="p-4 text-center flex items-center justify-center gap-2">
+                        <button onClick={() => { setFormData({}); setShowTopUpModal(member); }} className="text-emerald-400 hover:bg-emerald-500/10 p-2 rounded-full" title="Paket/Bakiye Yükle"><CreditCard size={18} /></button>
+                        <button onClick={() => { if(confirm('Silmek istediğinize emin misiniz?')) setMembers(members.filter((m:Member) => m.id !== member.id)) }} className="text-rose-400 hover:bg-rose-500/10 p-2 rounded-full"><Trash2 size={18} /></button>
+                        </td>
+                    </tr>
+                    ))}
+                </tbody>
+                </table>
+            </GlassCard>
+        </>
+      )}
+
+      {activeTab === 'GROUPS' && (
+          <div className="space-y-6">
+              <div className="flex justify-end"><PrimaryButton onClick={() => setShowGroupModal(true)} className="px-6 flex items-center gap-2"><Users2 size={18} /> Yeni Grup Oluştur</PrimaryButton></div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {groups.map((grp: Group) => (
+                    <GlassCard key={grp.id} className="p-6 relative group">
+                        <h3 className="text-xl font-bold text-white mb-2">{grp.name}</h3>
+                        <p className="text-white/40 text-sm mb-4">{grp.memberIds.length} Üye Kayıtlı</p>
+                        <div className="flex -space-x-2 overflow-hidden mb-4">
+                            {grp.memberIds.slice(0, 5).map(mid => {
+                                const m = members.find((x: Member) => x.id === mid);
+                                return m ? <div key={mid} className="inline-block h-8 w-8 rounded-full ring-2 ring-[#1c1c1e] bg-rose-500 flex items-center justify-center text-xs text-white font-bold" title={m.firstName}>{m.firstName[0]}</div> : null;
+                            })}
+                            {grp.memberIds.length > 5 && <div className="h-8 w-8 rounded-full ring-2 ring-[#1c1c1e] bg-white/10 flex items-center justify-center text-xs text-white">+{grp.memberIds.length - 5}</div>}
+                        </div>
+                        <button onClick={() => { if(confirm('Grubu silmek istiyor musunuz?')) setGroups(groups.filter((g:Group) => g.id !== grp.id)) }} className="text-rose-400 text-xs hover:underline">Grubu Sil</button>
+                    </GlassCard>
+                ))}
+              </div>
+              {groups.length === 0 && <EmptyState message="Henüz bir grup oluşturulmadı." />}
+          </div>
+      )}
+
+      {activeTab === 'IMPORT' && (
+          <GlassCard className="p-8 max-w-2xl mx-auto">
+              <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2"><Upload size={24}/> Excel / CSV Toplu Yükleme</h3>
+              <p className="text-white/50 text-sm mb-4">Aşağıdaki kutuya Excel'den veya CSV dosyanızdan verileri kopyalayıp yapıştırın. Her satır bir üyeyi temsil etmelidir.</p>
+              <div className="bg-black/30 p-4 rounded-xl mb-4 text-xs font-mono text-white/70">
+                  FORMAT: Ad, Soyad, Telefon, E-posta, Kalan Ders, Bakiye<br/>
+                  ÖRNEK: Ayşe, Yılmaz, 05551112233, ayse@mail.com, 10, 500
+              </div>
+              <textarea 
+                className="w-full h-48 bg-black/20 border border-white/10 rounded-xl p-4 text-white text-sm font-mono focus:outline-none focus:border-rose-500"
+                placeholder="Verileri buraya yapıştırın..."
+                value={importText}
+                onChange={(e) => setImportText(e.target.value)}
+              />
+              <PrimaryButton onClick={handleBulkImport} className="w-full mt-4">Yüklemeyi Başlat</PrimaryButton>
+          </GlassCard>
+      )}
+
+      {/* --- MODALS --- */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <GlassCard className="w-full max-w-lg bg-[#1c1c1e] border-white/10">
-            <div className="p-6 border-b border-white/5 flex justify-between items-center">
-              <h3 className="text-xl font-light text-white">Yeni Üye Kaydı</h3>
-              <button onClick={() => setShowAddModal(false)}><X className="text-white/50 hover:text-white" /></button>
-            </div>
+          <GlassCard className="w-full max-w-lg bg-[#1c1c1e] border-white/10 max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-white/5 flex justify-between items-center"><h3 className="text-xl font-light text-white">Yeni Üye Kaydı</h3><button onClick={() => setShowAddModal(false)}><X className="text-white/50 hover:text-white" /></button></div>
             <form onSubmit={handleAddMember} className="p-6 space-y-4">
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-xs text-white/50 ml-3">Ad *</label>
-                  <PillInput required value={formData.firstName || ''} onChange={e => setFormData({...formData, firstName: e.target.value})} />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs text-white/50 ml-3">Soyad *</label>
-                  <PillInput required value={formData.lastName || ''} onChange={e => setFormData({...formData, lastName: e.target.value})} />
-                </div>
+                <div className="space-y-1"><label className="text-xs text-white/50 ml-2">Ad *</label><PillInput required value={formData.firstName || ''} onChange={e => setFormData({...formData, firstName: e.target.value})} /></div>
+                <div className="space-y-1"><label className="text-xs text-white/50 ml-2">Soyad *</label><PillInput required value={formData.lastName || ''} onChange={e => setFormData({...formData, lastName: e.target.value})} /></div>
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-xs text-white/50 ml-3">Telefon</label>
-                  <PillInput value={formData.phone || ''} onChange={e => setFormData({...formData, phone: e.target.value})} />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs text-white/50 ml-3">Doğum Tarihi</label>
-                  <PillInput type="date" value={formData.birthDate || ''} onChange={e => setFormData({...formData, birthDate: e.target.value})} />
-                </div>
+                <div className="space-y-1"><label className="text-xs text-white/50 ml-2">Telefon *</label><PillInput required value={formData.phone || ''} onChange={e => setFormData({...formData, phone: e.target.value})} /></div>
+                <div className="space-y-1"><label className="text-xs text-white/50 ml-2">E-posta *</label><PillInput required type="email" value={formData.email || ''} onChange={e => setFormData({...formData, email: e.target.value})} /></div>
               </div>
-              <div className="space-y-2">
-                 <label className="text-xs text-white/50 ml-3">Paket Seçimi *</label>
-                 <PillSelect required value={formData.packageId || ''} onChange={e => setFormData({...formData, packageId: e.target.value})}>
-                   <option value="">Paket Seçiniz...</option>
-                   {packages.map((p: PilatesPackage) => (
-                     <option key={p.id} value={p.id}>{p.name} ({p.sessionCount} Ders - {p.price} TL)</option>
-                   ))}
-                 </PillSelect>
+              <div className="space-y-1"><label className="text-xs text-white/50 ml-2">Başlangıç Paketi</label><PillSelect value={formData.packageId || ''} onChange={e => setFormData({...formData, packageId: e.target.value})}><option value="">Paket Seçiniz...</option>{packages.map((p: PilatesPackage) => <option key={p.id} value={p.id}>{p.name} ({p.price} TL)</option>)}</PillSelect></div>
+              <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1"><label className="text-xs text-white/50 ml-2">Ekstra Ders Hakkı</label><PillInput type="number" placeholder="0" value={formData.extraSessions || ''} onChange={e => setFormData({...formData, extraSessions: e.target.value})} /></div>
+                  <div className="space-y-1"><label className="text-xs text-white/50 ml-2">Açılış Bakiyesi (+/-)</label><PillInput type="number" placeholder="0" value={formData.initialBalance || ''} onChange={e => setFormData({...formData, initialBalance: e.target.value})} /></div>
               </div>
-              <div className="space-y-2">
-                <label className="text-xs text-white/50 ml-3">Sağlık Notları</label>
-                <textarea 
-                  className="w-full bg-black/20 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder-white/30 focus:outline-none focus:border-rose-400/50" 
-                  rows={3}
-                  value={formData.healthNotes || ''} 
-                  onChange={e => setFormData({...formData, healthNotes: e.target.value})}
-                />
-              </div>
-              <PrimaryButton className="w-full mt-4">Kaydet</PrimaryButton>
+              <div className="flex items-center gap-2 p-3 bg-white/5 rounded-xl"><input type="checkbox" className="w-4 h-4" checked={formData.isPaid || false} onChange={e => setFormData({...formData, isPaid: e.target.checked})} /><span className="text-sm text-white">Paket Ücreti Peşin Alındı (Bakiyeyi Düşme)</span></div>
+              <PrimaryButton className="w-full mt-2">Kaydet</PrimaryButton>
             </form>
           </GlassCard>
         </div>
       )}
+
+      {showTopUpModal && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <GlassCard className="w-full max-w-md bg-[#1c1c1e] border-white/10">
+                <div className="p-6 border-b border-white/5 flex justify-between items-center"><h3 className="text-xl font-light text-white">Paket / Bakiye Yükle</h3><button onClick={() => setShowTopUpModal(null)}><X className="text-white/50 hover:text-white" /></button></div>
+                <form onSubmit={handleTopUp} className="p-6 space-y-4">
+                    <p className="text-white/60 text-sm">Üye: <strong>{showTopUpModal.firstName} {showTopUpModal.lastName}</strong></p>
+                    <div className="space-y-1"><label className="text-xs text-white/50 ml-2">Paket Seç (İsteğe Bağlı)</label><PillSelect value={formData.packageId || ''} onChange={e => setFormData({...formData, packageId: e.target.value})}><option value="">Sadece Bakiye/Ders Ekle</option>{packages.map((p: PilatesPackage) => <option key={p.id} value={p.id}>{p.name} ({p.sessionCount} Ders - {p.price} TL)</option>)}</PillSelect></div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1"><label className="text-xs text-white/50 ml-2">Manuel Ders Ekle</label><PillInput type="number" placeholder="0" value={formData.addSessions || ''} onChange={e => setFormData({...formData, addSessions: e.target.value})} /></div>
+                        <div className="space-y-1"><label className="text-xs text-white/50 ml-2">Manuel Bakiye Ekle</label><PillInput type="number" placeholder="0" value={formData.addBalance || ''} onChange={e => setFormData({...formData, addBalance: e.target.value})} /></div>
+                    </div>
+                    <div className="space-y-1"><label className="text-xs text-emerald-400/80 ml-2">Tahsil Edilen Tutar (Kasa Girişi)</label><PillInput type="number" placeholder="0" value={formData.paymentAmount || ''} onChange={e => setFormData({...formData, paymentAmount: e.target.value})} className="border-emerald-500/30 bg-emerald-500/5 focus:border-emerald-500" /></div>
+                    <PrimaryButton className="w-full mt-2">İşlemi Onayla</PrimaryButton>
+                </form>
+            </GlassCard>
+          </div>
+      )}
+
+      {showGroupModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <GlassCard className="w-full max-w-md bg-[#1c1c1e] border-white/10">
+                <div className="p-6 border-b border-white/5 flex justify-between items-center"><h3 className="text-xl font-light text-white">Yeni Grup Oluştur</h3><button onClick={() => setShowGroupModal(false)}><X className="text-white/50 hover:text-white" /></button></div>
+                <form onSubmit={handleCreateGroup} className="p-6 space-y-4">
+                    <div className="space-y-1"><label className="text-xs text-white/50 ml-2">Grup Adı</label><PillInput required placeholder="Örn: Sabah Pilates Grubu" value={formData.groupName || ''} onChange={e => setFormData({...formData, groupName: e.target.value})} /></div>
+                    <div className="space-y-1"><label className="text-xs text-white/50 ml-2">Üyeleri Seç (Çoklu Seçim)</label>
+                        <select multiple className="w-full h-32 bg-black/20 border border-white/10 rounded-2xl px-5 py-3 text-white focus:outline-none focus:border-rose-400/50" value={formData.selectedMembers || []} onChange={e => setFormData({...formData, selectedMembers: Array.from(e.target.selectedOptions, option => option.value)})}>
+                            {members.map((m: Member) => <option key={m.id} value={m.id}>{m.firstName} {m.lastName}</option>)}
+                        </select>
+                        <p className="text-[10px] text-white/30 ml-2">* Ctrl (Windows) veya Cmd (Mac) tuşuna basılı tutarak birden fazla kişi seçebilirsiniz.</p>
+                    </div>
+                    <PrimaryButton className="w-full mt-2">Grubu Oluştur</PrimaryButton>
+                </form>
+            </GlassCard>
+        </div>
+      )}
+
     </div>
   );
 }
@@ -546,9 +690,29 @@ function AccountingView({ transactions, setTransactions }: any) {
 
 // --- TRAINERS VIEW ---
 function TrainersView({ trainers, setTrainers }: any) {
-  const [formData, setFormData] = useState<Partial<Trainer>>({});
+  const [formData, setFormData] = useState<any>({});
   const [showModal, setShowModal] = useState(false);
-  const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); if (formData.id) { setTrainers(trainers.map((t: Trainer) => t.id === formData.id ? { ...t, ...formData } : t)); } else { setTrainers([...trainers, { ...formData, id: generateId() }]); } setShowModal(false); setFormData({}); };
+  
+  const handleSubmit = (e: React.FormEvent) => { 
+      e.preventDefault();
+      // Form verilerini sayısal değerlere güvenli çevirme
+      const rate = parseInt(formData.rate) || 0;
+      
+      const newTrainer = {
+          ...formData,
+          rate: rate,
+          id: formData.id || generateId()
+      };
+
+      if (formData.id) { 
+          setTrainers(trainers.map((t: Trainer) => t.id === formData.id ? newTrainer : t)); 
+      } else { 
+          setTrainers([...trainers, newTrainer]); 
+      } 
+      setShowModal(false); 
+      setFormData({}); 
+  };
+  
   const openEditModal = (trainer: Trainer) => { setFormData(trainer); setShowModal(true); };
 
   return (
@@ -566,13 +730,13 @@ function TrainersView({ trainers, setTrainers }: any) {
           </GlassCard>
         ))}
       </div>
-      {showModal && <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"><GlassCard className="w-full max-w-md bg-[#1c1c1e] border-white/10"><div className="p-6 border-b border-white/5 flex justify-between items-center"><h3 className="text-xl font-light text-white">{formData.id ? 'Eğitmen Düzenle' : 'Yeni Eğitmen'}</h3><button onClick={() => setShowModal(false)}><X className="text-white/50" /></button></div><form onSubmit={handleSubmit} className="p-6 space-y-4"><div className="grid grid-cols-2 gap-4"><PillInput required placeholder="Ad" value={formData.firstName || ''} onChange={e => setFormData({...formData, firstName: e.target.value})} /><PillInput required placeholder="Soyad" value={formData.lastName || ''} onChange={e => setFormData({...formData, lastName: e.target.value})} /></div><PillInput placeholder="Telefon" value={formData.phone || ''} onChange={e => setFormData({...formData, phone: e.target.value})} /><PillInput placeholder="E-posta" type="email" value={formData.email || ''} onChange={e => setFormData({...formData, email: e.target.value})} /><div className="grid grid-cols-2 gap-4"><PillInput required placeholder="Komisyon (%)" type="number" value={formData.rate || ''} onChange={e => setFormData({...formData, rate: parseInt(e.target.value)})} /><PillInput required type="date" value={formData.startDate || ''} onChange={e => setFormData({...formData, startDate: e.target.value})} /></div><PrimaryButton className="w-full mt-4">{formData.id ? 'Değişiklikleri Kaydet' : 'Kaydet'}</PrimaryButton></form></GlassCard></div>}
+      {showModal && <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"><GlassCard className="w-full max-w-md bg-[#1c1c1e] border-white/10"><div className="p-6 border-b border-white/5 flex justify-between items-center"><h3 className="text-xl font-light text-white">{formData.id ? 'Eğitmen Düzenle' : 'Yeni Eğitmen'}</h3><button onClick={() => setShowModal(false)}><X className="text-white/50" /></button></div><form onSubmit={handleSubmit} className="p-6 space-y-4"><div className="grid grid-cols-2 gap-4"><div className="space-y-1"><label className="text-xs text-white/50 ml-2">Ad *</label><PillInput required value={formData.firstName || ''} onChange={e => setFormData({...formData, firstName: e.target.value})} /></div><div className="space-y-1"><label className="text-xs text-white/50 ml-2">Soyad *</label><PillInput required value={formData.lastName || ''} onChange={e => setFormData({...formData, lastName: e.target.value})} /></div></div><div className="space-y-1"><label className="text-xs text-white/50 ml-2">Telefon</label><PillInput value={formData.phone || ''} onChange={e => setFormData({...formData, phone: e.target.value})} /></div><div className="space-y-1"><label className="text-xs text-white/50 ml-2">E-posta</label><PillInput type="email" value={formData.email || ''} onChange={e => setFormData({...formData, email: e.target.value})} /></div><div className="grid grid-cols-2 gap-4"><div className="space-y-1"><label className="text-xs text-white/50 ml-2">Komisyon (%) *</label><PillInput required type="number" value={formData.rate || ''} onChange={e => setFormData({...formData, rate: e.target.value})} /></div><div className="space-y-1"><label className="text-xs text-white/50 ml-2">Başlangıç *</label><PillInput required type="date" value={formData.startDate || ''} onChange={e => setFormData({...formData, startDate: e.target.value})} /></div></div><PrimaryButton className="w-full mt-4">{formData.id ? 'Değişiklikleri Kaydet' : 'Kaydet'}</PrimaryButton></form></GlassCard></div>}
     </div>
   );
 }
 
 // --- LESSONS VIEW ---
-function LessonsView({ lessons, setLessons, members, trainers, toggleLessonStatus }: any) {
+function LessonsView({ lessons, setLessons, members, trainers, toggleLessonStatus, groups }: any) {
   const [currentWeekStart, setCurrentWeekStart] = useState(new Date());
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState<Partial<Lesson>>({});
@@ -590,8 +754,6 @@ function LessonsView({ lessons, setLessons, members, trainers, toggleLessonStatu
       return d.toISOString().split('T')[0];
     });
   }, [currentWeekStart]);
-
-  const uniqueGroups = useMemo(() => { const groups = new Map(); members.forEach((m: Member) => { if (m.groupId && m.groupName) { if (!groups.has(m.groupId)) { groups.set(m.groupId, { id: m.groupId, name: m.groupName }); } } }); return Array.from(groups.values()); }, [members]);
 
   const handleCellClick = (date: string, time: number) => {
     setSelectedLesson(null);
@@ -613,10 +775,14 @@ function LessonsView({ lessons, setLessons, members, trainers, toggleLessonStatu
     let selectedMemberIds = formData.memberIds || [];
     let title = formData.title || 'Ders';
 
+    // Grup seçildiyse gruptaki üyeleri bul
     if (formData.type === 'group' && formData.groupId) {
-      const groupMembers = members.filter((m: Member) => m.groupId === formData.groupId);
-      selectedMemberIds = groupMembers.map((m: Member) => m.id);
-      title = `${formData.groupName} Dersi`;
+      const selectedGroup = groups.find((g: Group) => g.id === formData.groupId);
+      if (selectedGroup) {
+          selectedMemberIds = selectedGroup.memberIds;
+          title = `${selectedGroup.name} Dersi`;
+          formData.groupName = selectedGroup.name;
+      }
     } else if (formData.memberIds && formData.memberIds.length > 0) {
        const member = members.find((m: Member) => m.id === formData.memberIds![0]);
        if (member) title = `${member.firstName} ${member.lastName} Dersi`;
@@ -681,7 +847,7 @@ function LessonsView({ lessons, setLessons, members, trainers, toggleLessonStatu
       {showModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"><GlassCard className="w-full max-w-md bg-[#1c1c1e] border-white/10 max-h-[90vh] overflow-y-auto custom-scrollbar"><div className="p-6 border-b border-white/5 flex justify-between items-center"><h3 className="text-xl font-light text-white">{selectedLesson ? 'Ders Detayları' : 'Ders Planla'}</h3><button onClick={() => setShowModal(false)}><X className="text-white/50 hover:text-white" /></button></div>{selectedLesson ? (<div className="p-6 space-y-6"><div className="space-y-4"><div className="flex items-center justify-between"><h4 className="text-lg font-bold text-white">{selectedLesson.title}</h4><span className={`text-xs px-2 py-1 rounded uppercase ${selectedLesson.isCompleted ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>{selectedLesson.isCompleted ? 'Tamamlandı' : 'Bekliyor'}</span></div><div className="grid grid-cols-2 gap-4 text-sm text-white/60"><div><p className="text-xs text-white/30 uppercase">Tarih</p>{formatDate(selectedLesson.date)}</div><div><p className="text-xs text-white/30 uppercase">Saat</p>{selectedLesson.startTime} - {selectedLesson.endTime}</div></div>{selectedLesson.googleCalendarEventId && (<div className="flex items-center gap-2 text-xs text-blue-400 bg-blue-500/10 p-2 rounded"><CalendarCheck size={14} /> Google Takvim ile Senkronize</div>)}
       </div><div className="pt-6 border-t border-white/10">{selectedLesson.isCompleted ? (<PrimaryButton onClick={handleToggleComplete} className="w-full bg-slate-700 hover:bg-slate-600"><RefreshCcw size={18} /> Geri Al (Tamamlanmadı Yap)</PrimaryButton>) : (<PrimaryButton onClick={handleToggleComplete} className="w-full bg-emerald-600 hover:bg-emerald-700"><Check size={18} /> Dersi Tamamla & Bakiyeden Düş</PrimaryButton>)}<p className="text-[10px] text-white/30 text-center mt-3">{selectedLesson.isCompleted ? "Geri alındığında üyeye ders hakkı iade edilir ve hoca ödemesi iptal edilir." : "Ders tamamlandığında üyeden 1 ders düşülür ve hocaya hakediş yazılır."}</p></div></div>) : (
-      <form onSubmit={handleSubmit} className="p-6 space-y-4"><div className="space-y-2"><label className="text-xs text-white/50 ml-3">Eğitmen</label><PillSelect required value={formData.trainerId} onChange={e => setFormData({...formData, trainerId: e.target.value})}><option value="">Seçiniz...</option>{trainers.map((t: Trainer) => <option key={t.id} value={t.id}>{t.firstName} {t.lastName}</option>)}</PillSelect></div><div className="space-y-2"><label className="text-xs text-white/50 ml-3">Ders Tipi</label><PillSelect required value={formData.type} onChange={e => setFormData({...formData, type: e.target.value as any})}><option value="mat">Mat Pilates</option><option value="reformer">Reformer</option><option value="pregnant">Hamile Pilatesi</option><option value="group">Grup Ders</option></PillSelect></div>{formData.type === 'group' ? (<div className="space-y-2 animate-in fade-in"><label className="text-xs text-white/50 ml-3">Grup Seçimi</label><PillSelect required value={formData.groupId} onChange={e => { const selectedG = uniqueGroups.find((g: any) => g.id === e.target.value); setFormData({...formData, groupId: selectedG?.id, groupName: selectedG?.name}); }}><option value="">Grup Seçiniz...</option>{uniqueGroups.map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}</PillSelect></div>) : (<div className="space-y-2 animate-in fade-in"><label className="text-xs text-white/50 ml-3">Üye</label><PillSelect required value={formData.memberIds?.[0] || ''} onChange={e => setFormData({...formData, memberIds: [e.target.value]})}><option value="">Seçiniz...</option>{members.filter((m: Member) => !m.groupId).map((m: Member) => <option key={m.id} value={m.id}>{m.firstName} {m.lastName} ({m.remainingSessions} hak)</option>)}</PillSelect></div>)}<PrimaryButton type="submit" disabled={isSyncing} className="w-full mt-4">Kaydet ve Takvime Ekle</PrimaryButton></form>)}</GlassCard></div>
+      <form onSubmit={handleSubmit} className="p-6 space-y-4"><div className="space-y-2"><label className="text-xs text-white/50 ml-3">Eğitmen</label><PillSelect required value={formData.trainerId} onChange={e => setFormData({...formData, trainerId: e.target.value})}><option value="">Seçiniz...</option>{trainers.map((t: Trainer) => <option key={t.id} value={t.id}>{t.firstName} {t.lastName}</option>)}</PillSelect></div><div className="space-y-2"><label className="text-xs text-white/50 ml-3">Ders Tipi</label><PillSelect required value={formData.type} onChange={e => setFormData({...formData, type: e.target.value as any})}><option value="mat">Mat Pilates</option><option value="reformer">Reformer</option><option value="pregnant">Hamile Pilatesi</option><option value="group">Grup Ders</option></PillSelect></div>{formData.type === 'group' ? (<div className="space-y-2 animate-in fade-in"><label className="text-xs text-white/50 ml-3">Grup Seçimi</label><PillSelect required value={formData.groupId} onChange={e => { const selectedG = groups.find((g: any) => g.id === e.target.value); setFormData({...formData, groupId: selectedG?.id, groupName: selectedG?.name}); }}><option value="">Grup Seçiniz...</option>{groups.map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}</PillSelect></div>) : (<div className="space-y-2 animate-in fade-in"><label className="text-xs text-white/50 ml-3">Üye</label><PillSelect required value={formData.memberIds?.[0] || ''} onChange={e => setFormData({...formData, memberIds: [e.target.value]})}><option value="">Seçiniz...</option>{members.filter((m: Member) => !m.groupId).map((m: Member) => <option key={m.id} value={m.id}>{m.firstName} {m.lastName} ({m.remainingSessions} hak)</option>)}</PillSelect></div>)}<PrimaryButton type="submit" disabled={isSyncing} className="w-full mt-4">Kaydet ve Takvime Ekle</PrimaryButton></form>)}</GlassCard></div>
       )}
     </div>
   );
@@ -760,6 +926,7 @@ export default function VivaDaPilatesApp() {
   
   const [packages, setPackages] = useState<PilatesPackage[]>(DEFAULT_PACKAGES);
   const [members, setMembers] = useState<Member[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
   const [trainers, setTrainers] = useState<Trainer[]>([]);
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -771,22 +938,15 @@ export default function VivaDaPilatesApp() {
   useEffect(() => {
     if (members.length === 0) {
       const pkg1 = packages.find(p => p.id === 'p2')!; 
-      const pkg2 = packages.find(p => p.id === 'p3')!; 
-
+      
       setMembers([
         { 
           id: '1', firstName: 'Ayşe', lastName: 'Yılmaz', phone: '0555 111 22 33', email: 'ayse@test.com', birthDate: '1990-01-01', healthNotes: 'Bel fıtığı başlangıcı', 
-          packageId: pkg1.id, packageName: pkg1.name, remainingSessions: 1, totalSessionsPaid: pkg1.sessionCount, pricePaid: 5000, debt: 500, createdAt: new Date().toISOString() 
-        },
-        { 
-          id: '2', firstName: 'Mehmet', lastName: 'Demir', phone: '0555 222 33 44', email: 'mehmet@test.com', birthDate: '1985-05-15', healthNotes: '', 
-          packageId: pkg2.id, packageName: pkg2.name, remainingSessions: 6, totalSessionsPaid: pkg2.sessionCount, pricePaid: 2000, debt: 0, 
-          groupId: 'g1', groupName: 'Sabah Grubu', createdAt: new Date().toISOString() 
+          packageName: pkg1.name, remainingSessions: 1, balance: -500, createdAt: new Date().toISOString() 
         }
       ]);
       setTrainers([
-        { id: '1', firstName: 'Çağkan', lastName: 'Hoca', phone: '0531 733 75 43', email: 'cagkan@viva.com', rate: 50, startDate: '2023-01-01' },
-        { id: '2', firstName: 'Eren', lastName: 'Hoca', phone: '0553 288 00 41', email: 'eren@viva.com', rate: 45, startDate: '2023-02-01' }
+        { id: '1', firstName: 'Çağkan', lastName: 'Hoca', phone: '0531 733 75 43', email: 'cagkan@viva.com', rate: 50, startDate: '2023-01-01' }
       ]);
     }
   }, []);
@@ -828,23 +988,20 @@ export default function VivaDaPilatesApp() {
     setMembers(updatedMembers);
     
     if (isCompleting) {
-      let totalLessonRevenueForCalc = 0;
-      lesson.memberIds.forEach(mId => {
-        const member = members.find(m => m.id === mId);
-        if (member && member.totalSessionsPaid > 0) {
-          totalLessonRevenueForCalc += member.pricePaid / member.totalSessionsPaid;
-        }
-      });
-
+      // Grup dersiyse tek tek değil, eğitmen için toplam bir hakediş hesapla veya her öğrenci için ayrı
+      // Basitleştirilmiş: Her öğrenci için paket birim fiyatı üzerinden komisyon
+      
       const trainer = trainers.find(t => t.id === lesson.trainerId);
       if (trainer) {
+        // Hakediş hesaplama (Basit mantık: Ders başı sabit veya paket oranlı)
+        // Burada tahmini bir değer (Örn: 200 TL hakediş) ekliyoruz, detaylandırılabilir.
         setTransactions(prev => [...prev, {
           id: generateId(),
           date: new Date().toISOString(),
           type: 'EXPENSE',
           category: 'TRAINER_PAYMENT',
           description: `Hakediş: ${trainer.firstName} ${trainer.lastName} (${lesson.title})`,
-          amount: parseFloat(((totalLessonRevenueForCalc * trainer.rate) / 100).toFixed(2)),
+          amount: 250, // Sabit ders başı ücreti örneği
           relatedId: lesson.id,
           isPaid: false 
         }]);
@@ -909,8 +1066,8 @@ export default function VivaDaPilatesApp() {
       <main className="flex-1 md:ml-72 p-4 md:p-8 overflow-y-auto h-screen relative z-10">
         <div className="max-w-7xl mx-auto">
           {activeTab === 'dashboard' && <DashboardView members={members} lessons={lessons} transactions={transactions} />}
-          {activeTab === 'members' && <MembersView members={members} setMembers={setMembers} packages={packages} setTransactions={setTransactions} />}
-          {activeTab === 'lessons' && <LessonsView lessons={lessons} setLessons={setLessons} members={members} trainers={trainers} toggleLessonStatus={toggleLessonStatus} />}
+          {activeTab === 'members' && <MembersView members={members} setMembers={setMembers} packages={packages} setTransactions={setTransactions} groups={groups} setGroups={setGroups} />}
+          {activeTab === 'lessons' && <LessonsView lessons={lessons} setLessons={setLessons} members={members} trainers={trainers} toggleLessonStatus={toggleLessonStatus} groups={groups} />}
           {activeTab === 'trainers' && currentUser.role === 'ADMIN' && <TrainersView trainers={trainers} setTrainers={setTrainers} />}
           {activeTab === 'packages' && <PackagesView packages={packages} setPackages={setPackages} />}
           {activeTab === 'accounting' && currentUser.role === 'ADMIN' && <AccountingView transactions={transactions} setTransactions={setTransactions} />}
