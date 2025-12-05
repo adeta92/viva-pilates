@@ -226,12 +226,8 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
   const [showTopUpModal, setShowTopUpModal] = useState<Member | null>(null);
   const [showGroupModal, setShowGroupModal] = useState(false);
   
-  // Üye Ekleme Formu State'i
   const [formData, setFormData] = useState<any>({});
-  
-  // Toplu Yükleme State'i
   const [importText, setImportText] = useState("");
-
   const [searchTerm, setSearchTerm] = useState("");
 
   // --- ÜYE İŞLEMLERİ ---
@@ -239,9 +235,9 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
     e.preventDefault();
     const selectedPackage = packages.find((p: PilatesPackage) => p.id === formData.packageId);
     
-    // Açılış bakiyesi hesaplama: Eğer ödeme alındıysa bakiye 0, alınmadıysa eksi bakiye
     const isPaid = formData.isPaid === true;
     const initialDebt = selectedPackage && !isPaid ? -selectedPackage.price : 0;
+    const initialBalance = parseFloat(formData.initialBalance) || 0;
     
     const newMember: Member = {
       id: generateId(),
@@ -253,23 +249,36 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
       healthNotes: formData.healthNotes || "",
       packageName: selectedPackage?.name || "Paketsiz",
       remainingSessions: (selectedPackage?.sessionCount || 0) + (parseInt(formData.extraSessions) || 0),
-      balance: (parseFloat(formData.initialBalance) || 0) + initialDebt,
+      balance: initialBalance + initialDebt,
       createdAt: new Date().toISOString()
     };
 
     setMembers([...members, newMember]);
     
-    // Gelir kaydı (Eğer ödeme alındıysa)
+    // GELİR KAYDI 1: Paket peşin alındıysa
     if (selectedPackage && isPaid) {
       setTransactions((prev: Transaction[]) => [...prev, {
         id: generateId(),
         date: new Date().toISOString(),
         type: 'INCOME',
         category: 'MEMBER_PAYMENT',
-        description: `Yeni Üye: ${newMember.firstName} ${newMember.lastName} (${selectedPackage.name})`,
+        description: `Yeni Üye Ödemesi: ${newMember.firstName} ${newMember.lastName} (${selectedPackage.name})`,
         amount: selectedPackage.price,
         isPaid: true
       }]);
+    }
+
+    // GELİR KAYDI 2: Açılış bakiyesi pozitifse (Peşin bakiye yüklemesi)
+    if (initialBalance > 0) {
+        setTransactions((prev: Transaction[]) => [...prev, {
+            id: generateId(),
+            date: new Date().toISOString(),
+            type: 'INCOME',
+            category: 'MEMBER_PAYMENT',
+            description: `Açılış Bakiyesi: ${newMember.firstName} ${newMember.lastName}`,
+            amount: initialBalance,
+            isPaid: true
+        }]);
     }
 
     setShowAddModal(false);
@@ -281,24 +290,20 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
     if (!showTopUpModal) return;
 
     const addedSessions = parseInt(formData.addSessions) || 0;
-    const addedBalance = parseFloat(formData.addBalance) || 0;
-    const paymentAmount = parseFloat(formData.paymentAmount) || 0;
+    const addedBalance = parseFloat(formData.addBalance) || 0; // Manuel bakiye ekleme (Hediye vb.)
+    const paymentAmount = parseFloat(formData.paymentAmount) || 0; // Kasaya giren para
     const packageId = formData.packageId;
     const selectedPackage = packages.find((p: PilatesPackage) => p.id === packageId);
 
     let finalSessions = showTopUpModal.remainingSessions + addedSessions;
-    let finalBalance = showTopUpModal.balance + addedBalance; // Manuel bakiye ekleme
+    // Bakiye mantığı: Mevcut + Eklenen + Ödenen - Paket Fiyatı
+    let finalBalance = showTopUpModal.balance + addedBalance + paymentAmount;
 
     if (selectedPackage) {
         finalSessions += selectedPackage.sessionCount;
-        // Paket ücreti kadar borçlandır, ödeme kadar alacaklandır
-        finalBalance = finalBalance - selectedPackage.price + paymentAmount;
-    } else {
-        // Sadece ödeme yapıldıysa bakiyeye ekle
-        finalBalance += paymentAmount; 
+        finalBalance -= selectedPackage.price;
     }
 
-    // Üyeyi güncelle
     setMembers(members.map((m: Member) => m.id === showTopUpModal.id ? {
         ...m,
         remainingSessions: finalSessions,
@@ -306,7 +311,7 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
         packageName: selectedPackage ? selectedPackage.name : m.packageName
     } : m));
 
-    // Gelir Ekle (Ödeme varsa)
+    // Gelir Ekle (Eğer tahsilat yapıldıysa)
     if (paymentAmount > 0) {
         setTransactions((prev: Transaction[]) => [...prev, {
             id: generateId(),
@@ -334,7 +339,6 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
     
     setGroups([...groups, newGroup]);
     
-    // Seçilen üyelerin grup bilgisini güncelle
     if (newGroup.memberIds.length > 0) {
         setMembers(members.map((m: Member) => 
             newGroup.memberIds.includes(m.id) ? { ...m, groupId: newGroup.id, groupName: newGroup.name } : m
@@ -351,7 +355,7 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
     const newMembers: Member[] = [];
     
     lines.forEach(line => {
-        const parts = line.split(','); // Basit CSV: Ad, Soyad, Telefon, Email, KalanDers, Bakiye
+        const parts = line.split(',');
         if (parts.length >= 2) {
             newMembers.push({
                 id: generateId(),
@@ -493,7 +497,7 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
                   <div className="space-y-1"><label className="text-xs text-white/50 ml-2">Açılış Bakiyesi (+/-)</label><PillInput type="number" placeholder="0" value={formData.initialBalance || ''} onChange={e => setFormData({...formData, initialBalance: e.target.value})} /></div>
               </div>
               <div className="flex items-center gap-2 p-3 bg-white/5 rounded-xl"><input type="checkbox" className="w-4 h-4" checked={formData.isPaid || false} onChange={e => setFormData({...formData, isPaid: e.target.checked})} /><span className="text-sm text-white">Paket Ücreti Peşin Alındı (Bakiyeyi Düşme)</span></div>
-              <PrimaryButton className="w-full mt-2">Kaydet</PrimaryButton>
+              <PrimaryButton type="submit" className="w-full mt-2">Kaydet</PrimaryButton>
             </form>
           </GlassCard>
         </div>
@@ -511,7 +515,7 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
                         <div className="space-y-1"><label className="text-xs text-white/50 ml-2">Manuel Bakiye Ekle</label><PillInput type="number" placeholder="0" value={formData.addBalance || ''} onChange={e => setFormData({...formData, addBalance: e.target.value})} /></div>
                     </div>
                     <div className="space-y-1"><label className="text-xs text-emerald-400/80 ml-2">Tahsil Edilen Tutar (Kasa Girişi)</label><PillInput type="number" placeholder="0" value={formData.paymentAmount || ''} onChange={e => setFormData({...formData, paymentAmount: e.target.value})} className="border-emerald-500/30 bg-emerald-500/5 focus:border-emerald-500" /></div>
-                    <PrimaryButton className="w-full mt-2">İşlemi Onayla</PrimaryButton>
+                    <PrimaryButton type="submit" className="w-full mt-2">İşlemi Onayla</PrimaryButton>
                 </form>
             </GlassCard>
           </div>
@@ -529,7 +533,7 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
                         </select>
                         <p className="text-[10px] text-white/30 ml-2">* Ctrl (Windows) veya Cmd (Mac) tuşuna basılı tutarak birden fazla kişi seçebilirsiniz.</p>
                     </div>
-                    <PrimaryButton className="w-full mt-2">Grubu Oluştur</PrimaryButton>
+                    <PrimaryButton type="submit" className="w-full mt-2">Grubu Oluştur</PrimaryButton>
                 </form>
             </GlassCard>
         </div>
@@ -730,7 +734,7 @@ function TrainersView({ trainers, setTrainers }: any) {
           </GlassCard>
         ))}
       </div>
-      {showModal && <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"><GlassCard className="w-full max-w-md bg-[#1c1c1e] border-white/10"><div className="p-6 border-b border-white/5 flex justify-between items-center"><h3 className="text-xl font-light text-white">{formData.id ? 'Eğitmen Düzenle' : 'Yeni Eğitmen'}</h3><button onClick={() => setShowModal(false)}><X className="text-white/50" /></button></div><form onSubmit={handleSubmit} className="p-6 space-y-4"><div className="grid grid-cols-2 gap-4"><div className="space-y-1"><label className="text-xs text-white/50 ml-2">Ad *</label><PillInput required value={formData.firstName || ''} onChange={e => setFormData({...formData, firstName: e.target.value})} /></div><div className="space-y-1"><label className="text-xs text-white/50 ml-2">Soyad *</label><PillInput required value={formData.lastName || ''} onChange={e => setFormData({...formData, lastName: e.target.value})} /></div></div><div className="space-y-1"><label className="text-xs text-white/50 ml-2">Telefon</label><PillInput value={formData.phone || ''} onChange={e => setFormData({...formData, phone: e.target.value})} /></div><div className="space-y-1"><label className="text-xs text-white/50 ml-2">E-posta</label><PillInput type="email" value={formData.email || ''} onChange={e => setFormData({...formData, email: e.target.value})} /></div><div className="grid grid-cols-2 gap-4"><div className="space-y-1"><label className="text-xs text-white/50 ml-2">Komisyon (%) *</label><PillInput required type="number" value={formData.rate || ''} onChange={e => setFormData({...formData, rate: e.target.value})} /></div><div className="space-y-1"><label className="text-xs text-white/50 ml-2">Başlangıç *</label><PillInput required type="date" value={formData.startDate || ''} onChange={e => setFormData({...formData, startDate: e.target.value})} /></div></div><PrimaryButton className="w-full mt-4">{formData.id ? 'Değişiklikleri Kaydet' : 'Kaydet'}</PrimaryButton></form></GlassCard></div>}
+      {showModal && <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"><GlassCard className="w-full max-w-md bg-[#1c1c1e] border-white/10"><div className="p-6 border-b border-white/5 flex justify-between items-center"><h3 className="text-xl font-light text-white">{formData.id ? 'Eğitmen Düzenle' : 'Yeni Eğitmen'}</h3><button onClick={() => setShowModal(false)}><X className="text-white/50" /></button></div><form onSubmit={handleSubmit} className="p-6 space-y-4"><div className="grid grid-cols-2 gap-4"><div className="space-y-1"><label className="text-xs text-white/50 ml-2">Ad *</label><PillInput required value={formData.firstName || ''} onChange={e => setFormData({...formData, firstName: e.target.value})} /></div><div className="space-y-1"><label className="text-xs text-white/50 ml-2">Soyad *</label><PillInput required value={formData.lastName || ''} onChange={e => setFormData({...formData, lastName: e.target.value})} /></div></div><div className="space-y-1"><label className="text-xs text-white/50 ml-2">Telefon</label><PillInput value={formData.phone || ''} onChange={e => setFormData({...formData, phone: e.target.value})} /></div><div className="space-y-1"><label className="text-xs text-white/50 ml-2">E-posta</label><PillInput type="email" value={formData.email || ''} onChange={e => setFormData({...formData, email: e.target.value})} /></div><div className="grid grid-cols-2 gap-4"><div className="space-y-1"><label className="text-xs text-white/50 ml-2">Komisyon (%) *</label><PillInput required type="number" value={formData.rate || ''} onChange={e => setFormData({...formData, rate: e.target.value})} /></div><div className="space-y-1"><label className="text-xs text-white/50 ml-2">Başlangıç *</label><PillInput required type="date" value={formData.startDate || ''} onChange={e => setFormData({...formData, startDate: e.target.value})} /></div></div><PrimaryButton type="submit" className="w-full mt-4">{formData.id ? 'Değişiklikleri Kaydet' : 'Kaydet'}</PrimaryButton></form></GlassCard></div>}
     </div>
   );
 }
