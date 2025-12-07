@@ -268,7 +268,7 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
       }]);
     }
 
-    // GELİR KAYDI 2: Açılış bakiyesi pozitifse (Peşin bakiye yüklemesi)
+    // GELİR KAYDI 2: Açılış bakiyesi pozitifse (Bakiye yüklemesi)
     if (initialBalance > 0) {
         setTransactions((prev: Transaction[]) => [...prev, {
             id: generateId(),
@@ -290,7 +290,7 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
     if (!showTopUpModal) return;
 
     const addedSessions = parseInt(formData.addSessions) || 0;
-    const addedBalance = parseFloat(formData.addBalance) || 0; // Manuel bakiye ekleme (Hediye vb.)
+    const addedBalance = parseFloat(formData.addBalance) || 0; // Manuel bakiye ekleme
     const paymentAmount = parseFloat(formData.paymentAmount) || 0; // Kasaya giren para
     const packageId = formData.packageId;
     const selectedPackage = packages.find((p: PilatesPackage) => p.id === packageId);
@@ -311,7 +311,7 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
         packageName: selectedPackage ? selectedPackage.name : m.packageName
     } : m));
 
-    // Gelir Ekle (Eğer tahsilat yapıldıysa)
+    // Gelir Ekle 1: Tahsilat yapıldıysa
     if (paymentAmount > 0) {
         setTransactions((prev: Transaction[]) => [...prev, {
             id: generateId(),
@@ -320,6 +320,19 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
             category: 'MEMBER_PAYMENT',
             description: `Tahsilat: ${showTopUpModal.firstName} ${showTopUpModal.lastName}`,
             amount: paymentAmount,
+            isPaid: true
+        }]);
+    }
+
+    // Gelir Ekle 2: Manuel Bakiye Yüklendiyse (Gelir say)
+    if (addedBalance > 0) {
+        setTransactions((prev: Transaction[]) => [...prev, {
+            id: generateId(),
+            date: new Date().toISOString(),
+            type: 'INCOME',
+            category: 'MEMBER_PAYMENT',
+            description: `Bakiye Yükleme (Manuel): ${showTopUpModal.firstName} ${showTopUpModal.lastName}`,
+            amount: addedBalance,
             isPaid: true
         }]);
     }
