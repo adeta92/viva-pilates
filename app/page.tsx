@@ -1,14 +1,35 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { initializeApp } from "firebase/app";
 import { 
-  Calendar, Users, DollarSign, UserCog, LogOut, 
+  getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs 
+} from "firebase/firestore";
+import { 
+  Calendar, Users, UserCog, LogOut, 
   Plus, Trash2, Check, X, ChevronLeft, ChevronRight, 
-  Search, AlertCircle, Menu, Wallet, HeartPulse, CreditCard, RefreshCcw, Phone, Mail, Box, Pencil, ExternalLink, CalendarCheck, TrendingUp, Calculator, Upload, FileText, RotateCcw, Sparkles, Loader2, Users2, Download
+  Search, AlertCircle, Menu, Wallet, HeartPulse, CreditCard, RefreshCcw, Phone, Mail, Box, Pencil, CalendarCheck, TrendingUp, Calculator, Upload, Users2
 } from 'lucide-react';
 
 // ==========================================
-// 1. TİP TANIMLAMALARI VE SABİTLER
+// 1. FIREBASE AYARLARI
+// ==========================================
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCq_X4ug43w10h0owiWb59ha_HWzI1d6sQ",
+  authDomain: "viva-pilates-app.firebaseapp.com",
+  projectId: "viva-pilates-app",
+  storageBucket: "viva-pilates-app.firebasestorage.app",
+  messagingSenderId: "318630534142",
+  appId: "1:318630534142:web:99497a1e4f0fbc4de4feaf"
+};
+
+// Firebase'i Başlat
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// ==========================================
+// 2. TİP TANIMLAMALARI VE SABİTLER
 // ==========================================
 
 const LOGO_URL = "/logo.jpg"; 
@@ -39,10 +60,10 @@ interface Member {
   email: string;
   birthDate: string;
   healthNotes: string;
-  packageName: string;       // Son alınan paket adı
-  remainingSessions: number; // Toplam kalan ders hakkı
-  balance: number;           // Cüzdan Bakiyesi (+ Alacak, - Borç)
-  groupId?: string;          // Bağlı olduğu grup ID'si
+  packageName: string;       
+  remainingSessions: number; 
+  balance: number;           
+  groupId?: string;          
   groupName?: string;
   createdAt: string;
 }
@@ -113,10 +134,69 @@ const PASSWORDS: Record<string, string> = {
 };
 
 // ==========================================
-// 2. YARDIMCI FONKSİYONLAR
+// 3. YARDIMCI FONKSİYONLAR & HOOKS
 // ==========================================
 
-const generateId = () => Math.random().toString(36).substr(2, 9);
+// Firebase Collection Hook (Canlı Veri Akışı)
+function useFirebaseCollection<T>(collectionName: string) {
+  const [data, setData] = useState<T[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Veritabanına abone ol (Real-time listener)
+    const q = query(collection(db, collectionName));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const items = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as T[];
+      setData(items);
+      setLoading(false);
+    }, (error) => {
+      console.error(`Firebase Error (${collectionName}):`, error);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [collectionName]);
+
+  // Ekleme Fonksiyonu
+  const add = async (item: any) => {
+    try {
+      // ID'yi çakışma olmasın diye siliyoruz, Firebase kendi ID'sini verecek
+      const { id, ...rest } = item; 
+      await addDoc(collection(db, collectionName), rest);
+    } catch (e) {
+      console.error("Error adding document: ", e);
+      alert("Kayıt eklenirken hata oluştu!");
+    }
+  };
+
+  // Güncelleme Fonksiyonu
+  const update = async (id: string, updates: any) => {
+    try {
+      const docRef = doc(db, collectionName, id);
+      await updateDoc(docRef, updates);
+    } catch (e) {
+      console.error("Error updating document: ", e);
+      alert("Güncelleme sırasında hata oluştu!");
+    }
+  };
+
+  // Silme Fonksiyonu
+  const remove = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, collectionName, id));
+    } catch (e) {
+      console.error("Error deleting document: ", e);
+      alert("Silme işlemi başarısız!");
+    }
+  };
+
+  return { data, loading, add, update, remove };
+}
+
+const generateId = () => Math.random().toString(36).substring(2, 11);
 
 const formatDate = (dateStr: string) => {
   if (!dateStr) return '';
@@ -149,7 +229,7 @@ const openGoogleCalendar = (lesson: Partial<Lesson>, members: Member[], trainer:
 };
 
 // ==========================================
-// 3. UI BİLEŞENLERİ
+// 4. UI BİLEŞENLERİ
 // ==========================================
 
 function GlassCard({ children, className = "" }: { children: React.ReactNode, className?: string }) {
@@ -216,11 +296,11 @@ function EmptyState({ message }: { message: string }) {
 }
 
 // ==========================================
-// 4. ALT SAYFALAR (VIEW COMPONENTS)
+// 5. ALT SAYFALAR (VIEW COMPONENTS)
 // ==========================================
 
 // --- MEMBERS & GROUPS VIEW ---
-function MembersView({ members, setMembers, packages, setTransactions, groups, setGroups }: any) {
+function MembersView({ members, addMember, updateMember, deleteMember, packages, addTransaction, groups, addGroup, deleteGroup }: any) {
   const [activeTab, setActiveTab] = useState<'MEMBERS' | 'GROUPS' | 'IMPORT'>('MEMBERS');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showTopUpModal, setShowTopUpModal] = useState<Member | null>(null);
@@ -253,11 +333,10 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
       createdAt: new Date().toISOString()
     };
 
-    setMembers([...members, newMember]);
+    addMember(newMember);
     
-    // GELİR KAYDI 1: Paket peşin alındıysa
     if (selectedPackage && isPaid) {
-      setTransactions((prev: Transaction[]) => [...prev, {
+      addTransaction({
         id: generateId(),
         date: new Date().toISOString(),
         type: 'INCOME',
@@ -265,12 +344,11 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
         description: `Yeni Üye Ödemesi: ${newMember.firstName} ${newMember.lastName} (${selectedPackage.name})`,
         amount: selectedPackage.price,
         isPaid: true
-      }]);
+      });
     }
 
-    // GELİR KAYDI 2: Açılış bakiyesi pozitifse (Bakiye yüklemesi)
     if (initialBalance > 0) {
-        setTransactions((prev: Transaction[]) => [...prev, {
+        addTransaction({
             id: generateId(),
             date: new Date().toISOString(),
             type: 'INCOME',
@@ -278,7 +356,7 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
             description: `Açılış Bakiyesi: ${newMember.firstName} ${newMember.lastName}`,
             amount: initialBalance,
             isPaid: true
-        }]);
+        });
     }
 
     setShowAddModal(false);
@@ -290,13 +368,12 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
     if (!showTopUpModal) return;
 
     const addedSessions = parseInt(formData.addSessions) || 0;
-    const addedBalance = parseFloat(formData.addBalance) || 0; // Manuel bakiye ekleme
-    const paymentAmount = parseFloat(formData.paymentAmount) || 0; // Kasaya giren para
+    const addedBalance = parseFloat(formData.addBalance) || 0; 
+    const paymentAmount = parseFloat(formData.paymentAmount) || 0; 
     const packageId = formData.packageId;
     const selectedPackage = packages.find((p: PilatesPackage) => p.id === packageId);
 
     let finalSessions = showTopUpModal.remainingSessions + addedSessions;
-    // Bakiye mantığı: Mevcut + Eklenen + Ödenen - Paket Fiyatı
     let finalBalance = showTopUpModal.balance + addedBalance + paymentAmount;
 
     if (selectedPackage) {
@@ -304,16 +381,15 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
         finalBalance -= selectedPackage.price;
     }
 
-    setMembers(members.map((m: Member) => m.id === showTopUpModal.id ? {
-        ...m,
+    // Update in Firestore
+    updateMember(showTopUpModal.id, {
         remainingSessions: finalSessions,
         balance: finalBalance,
-        packageName: selectedPackage ? selectedPackage.name : m.packageName
-    } : m));
+        packageName: selectedPackage ? selectedPackage.name : showTopUpModal.packageName
+    });
 
-    // Gelir Ekle 1: Tahsilat yapıldıysa
     if (paymentAmount > 0) {
-        setTransactions((prev: Transaction[]) => [...prev, {
+        addTransaction({
             id: generateId(),
             date: new Date().toISOString(),
             type: 'INCOME',
@@ -321,12 +397,11 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
             description: `Tahsilat: ${showTopUpModal.firstName} ${showTopUpModal.lastName}`,
             amount: paymentAmount,
             isPaid: true
-        }]);
+        });
     }
 
-    // Gelir Ekle 2: Manuel Bakiye Yüklendiyse (Gelir say)
     if (addedBalance > 0) {
-        setTransactions((prev: Transaction[]) => [...prev, {
+        addTransaction({
             id: generateId(),
             date: new Date().toISOString(),
             type: 'INCOME',
@@ -334,7 +409,7 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
             description: `Bakiye Yükleme (Manuel): ${showTopUpModal.firstName} ${showTopUpModal.lastName}`,
             amount: addedBalance,
             isPaid: true
-        }]);
+        });
     }
 
     setShowTopUpModal(null);
@@ -350,12 +425,12 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
         memberIds: formData.selectedMembers || []
     };
     
-    setGroups([...groups, newGroup]);
+    addGroup(newGroup);
     
     if (newGroup.memberIds.length > 0) {
-        setMembers(members.map((m: Member) => 
-            newGroup.memberIds.includes(m.id) ? { ...m, groupId: newGroup.id, groupName: newGroup.name } : m
-        ));
+        newGroup.memberIds.forEach(mId => {
+            updateMember(mId, { groupId: newGroup.id, groupName: newGroup.name });
+        });
     }
     
     setShowGroupModal(false);
@@ -365,12 +440,12 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
   // --- TOPLU YÜKLEME ---
   const handleBulkImport = () => {
     const lines = importText.split('\n');
-    const newMembers: Member[] = [];
+    let count = 0;
     
     lines.forEach(line => {
         const parts = line.split(',');
         if (parts.length >= 2) {
-            newMembers.push({
+            addMember({
                 id: generateId(),
                 firstName: parts[0]?.trim() || "",
                 lastName: parts[1]?.trim() || "",
@@ -383,13 +458,13 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
                 healthNotes: '',
                 createdAt: new Date().toISOString()
             });
+            count++;
         }
     });
 
-    setMembers([...members, ...newMembers]);
     setImportText("");
     setActiveTab('MEMBERS');
-    alert(`${newMembers.length} üye başarıyla yüklendi!`);
+    alert(`${count} üye başarıyla sıraya alındı ve yükleniyor!`);
   };
 
   const filteredMembers = members.filter((m: Member) => 
@@ -439,7 +514,7 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
                         <td className="p-4"><span className={`font-mono ${member.balance < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>{member.balance} ₺</span></td>
                         <td className="p-4 text-center flex items-center justify-center gap-2">
                         <button onClick={() => { setFormData({}); setShowTopUpModal(member); }} className="text-emerald-400 hover:bg-emerald-500/10 p-2 rounded-full" title="Paket/Bakiye Yükle"><CreditCard size={18} /></button>
-                        <button onClick={() => { if(confirm('Silmek istediğinize emin misiniz?')) setMembers(members.filter((m:Member) => m.id !== member.id)) }} className="text-rose-400 hover:bg-rose-500/10 p-2 rounded-full"><Trash2 size={18} /></button>
+                        <button onClick={() => { if(confirm('Silmek istediğinize emin misiniz?')) deleteMember(member.id) }} className="text-rose-400 hover:bg-rose-500/10 p-2 rounded-full"><Trash2 size={18} /></button>
                         </td>
                     </tr>
                     ))}
@@ -464,7 +539,7 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
                             })}
                             {grp.memberIds.length > 5 && <div className="h-8 w-8 rounded-full ring-2 ring-[#1c1c1e] bg-white/10 flex items-center justify-center text-xs text-white">+{grp.memberIds.length - 5}</div>}
                         </div>
-                        <button onClick={() => { if(confirm('Grubu silmek istiyor musunuz?')) setGroups(groups.filter((g:Group) => g.id !== grp.id)) }} className="text-rose-400 text-xs hover:underline">Grubu Sil</button>
+                        <button onClick={() => { if(confirm('Grubu silmek istiyor musunuz?')) deleteGroup(grp.id) }} className="text-rose-400 text-xs hover:underline">Grubu Sil</button>
                     </GlassCard>
                 ))}
               </div>
@@ -557,11 +632,27 @@ function MembersView({ members, setMembers, packages, setTransactions, groups, s
 }
 
 // --- PACKAGES VIEW ---
-function PackagesView({ packages, setPackages }: { packages: PilatesPackage[], setPackages: any }) {
+function PackagesView({ packages, addPackage, updatePackage, deletePackage }: any) {
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState<Partial<PilatesPackage>>({});
-  const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); if (formData.id) { setPackages(packages.map(p => p.id === formData.id ? { ...p, ...formData } : p)); } else { setPackages([...packages, { ...formData, id: generateId() }]); } setShowModal(false); setFormData({}); };
-  const handleDelete = (id: string) => { if (confirm('Bu paketi silmek istediğinize emin misiniz?')) { setPackages(packages.filter(p => p.id !== id)); } };
+  
+  const handleSubmit = (e: React.FormEvent) => { 
+      e.preventDefault(); 
+      if (formData.id) { 
+        updatePackage(formData.id, formData);
+      } else { 
+        addPackage({ ...formData, id: generateId() }); 
+      } 
+      setShowModal(false); 
+      setFormData({}); 
+  };
+  
+  const handleDelete = (id: string) => { 
+      if (confirm('Bu paketi silmek istediğinize emin misiniz?')) { 
+        deletePackage(id); 
+      } 
+  };
+  
   const openEditModal = (pkg: PilatesPackage) => { setFormData(pkg); setShowModal(true); };
   const openAddModal = () => { setFormData({ type: 'SINGLE', sessionCount: 1, price: 0 }); setShowModal(true); };
   const getTypeLabel = (type: string) => { switch(type) { case 'GROUP': return 'GRUP DERSİ'; case 'PRIVATE': return 'ÖZEL DERS'; case 'PRIVATE_GROUP': return 'ÖZEL GRUP DERSİ'; default: return 'BİREYSEL'; } };
@@ -571,7 +662,7 @@ function PackagesView({ packages, setPackages }: { packages: PilatesPackage[], s
     <div className="space-y-6">
       <div className="flex justify-between items-center"><h1 className="text-3xl font-light text-white">Paket Yönetimi</h1><PrimaryButton onClick={openAddModal} className="px-6 flex items-center gap-2"><Plus size={18} /> Yeni Paket Ekle</PrimaryButton></div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {packages.map(pkg => (
+        {packages.map((pkg: PilatesPackage) => (
           <GlassCard key={pkg.id} className="p-6 relative group hover:bg-white/[0.05] transition-colors flex flex-col h-full">
             <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => openEditModal(pkg)} className="p-2 bg-blue-500/20 text-blue-300 hover:bg-blue-500 hover:text-white rounded-full transition-colors" title="Düzenle"><Pencil size={14} /></button><button onClick={() => handleDelete(pkg.id)} className="p-2 bg-rose-500/20 text-rose-300 hover:bg-rose-500 hover:text-white rounded-full transition-colors" title="Sil"><Trash2 size={14} /></button></div>
             <div className="flex justify-between items-start mb-4"><div className="p-3 bg-rose-500/20 rounded-2xl text-rose-400"><Box size={24} /></div><span className={`text-[10px] uppercase font-bold px-2 py-1 rounded-full border ${getTypeColor(pkg.type)}`}>{getTypeLabel(pkg.type)}</span></div>
@@ -590,7 +681,7 @@ function PackagesView({ packages, setPackages }: { packages: PilatesPackage[], s
 }
 
 // --- ACCOUNTING VIEW ---
-function AccountingView({ transactions, setTransactions }: any) {
+function AccountingView({ transactions, addTransaction, updateTransaction, deleteTransaction }: any) {
   const [formType, setFormType] = useState<'EXPENSE' | 'INCOME'>('EXPENSE');
   const [category, setCategory] = useState(''); 
   const [desc, setDesc] = useState('');
@@ -607,7 +698,7 @@ function AccountingView({ transactions, setTransactions }: any) {
       finalDesc = category; 
     }
 
-    setTransactions([...transactions, { 
+    addTransaction({ 
       id: generateId(), 
       date: new Date().toISOString(), 
       type: formType, 
@@ -615,19 +706,28 @@ function AccountingView({ transactions, setTransactions }: any) {
       description: finalDesc, 
       amount: parseFloat(amt), 
       isPaid: isPaid 
-    }]); 
+    }); 
     
     setDesc(''); 
     setAmt(''); 
     setCategory('');
   };
 
-  const togglePaid = (id: string) => { setTransactions(transactions.map((t: Transaction) => t.id === id ? { ...t, isPaid: !t.isPaid } : t)); };
+  const togglePaid = (tx: Transaction) => { 
+      updateTransaction(tx.id, { isPaid: !tx.isPaid }); 
+  };
+  
   const toggleSelect = (id: string) => { if (selectedTxIds.includes(id)) { setSelectedTxIds(selectedTxIds.filter(txId => txId !== id)); } else { setSelectedTxIds([...selectedTxIds, id]); } };
-  const handleBulkPayment = () => { setTransactions(transactions.map((t: Transaction) => selectedTxIds.includes(t.id) ? { ...t, isPaid: true } : t)); setSelectedTxIds([]); setShowPaymentConfirm(false); };
-  const deleteTransaction = (id: string) => {
+  
+  const handleBulkPayment = () => { 
+      selectedTxIds.forEach(id => updateTransaction(id, { isPaid: true }));
+      setSelectedTxIds([]); 
+      setShowPaymentConfirm(false); 
+  };
+  
+  const handleDelete = (id: string) => {
       if (confirm('Bu kaydı silmek istediğinize emin misiniz?')) {
-          setTransactions(transactions.filter((t: Transaction) => t.id !== id));
+          deleteTransaction(id);
       }
   };
 
@@ -691,8 +791,8 @@ function AccountingView({ transactions, setTransactions }: any) {
           <div className="flex-1 overflow-y-auto custom-scrollbar">
             <table className="w-full text-left">
               <thead className="bg-white/5 text-white/40 text-xs font-bold uppercase tracking-widest sticky top-0 backdrop-blur-md z-10"><tr><th className="p-4 w-10 text-center">Seç</th><th className="p-4">Tarih / Açıklama</th><th className="p-4 text-center">İşlem</th><th className="p-4 text-right">Tutar</th><th className="p-4 text-center">Durum</th><th className="p-4 text-center w-10">Sil</th></tr></thead>
-              <tbody className="divide-y divide-white/5">{[...transactions].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(t => (<tr key={t.id} className={`hover:bg-white/[0.02] transition-colors ${selectedTxIds.includes(t.id) ? 'bg-indigo-500/10' : ''}`}><td className="p-4 text-center">{t.type === 'EXPENSE' && !t.isPaid && (<input type="checkbox" checked={selectedTxIds.includes(t.id)} onChange={() => toggleSelect(t.id)} className="w-4 h-4 rounded border-white/30 bg-black/50 checked:bg-indigo-500 transition-all cursor-pointer" />)}</td><td className="p-4"><div className="text-white/90 font-medium">{t.description}</div><div className="text-white/30 text-xs mt-1">{formatDate(t.date)}</div></td><td className="p-4 text-center"><span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${t.type === 'INCOME' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>{t.type === 'INCOME' ? 'GELİR' : 'GİDER'}</span></td><td className="p-4 text-right font-light text-white text-lg">{t.amount.toLocaleString('tr-TR')} ₺</td><td className="p-4 text-center">
-                  <button onClick={() => togglePaid(t.id)} className={`text-xs font-bold px-3 py-1 rounded-full transition-colors ${t.isPaid ? 'bg-emerald-500/10 text-emerald-500 hover:bg-rose-500/10 hover:text-rose-500 group' : 'text-rose-400 hover:bg-emerald-500/10 hover:text-emerald-500'}`}>
+              <tbody className="divide-y divide-white/5">{[...transactions].sort((a: Transaction,b: Transaction) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((t: Transaction) => (<tr key={t.id} className={`hover:bg-white/[0.02] transition-colors ${selectedTxIds.includes(t.id) ? 'bg-indigo-500/10' : ''}`}><td className="p-4 text-center">{t.type === 'EXPENSE' && !t.isPaid && (<input type="checkbox" checked={selectedTxIds.includes(t.id)} onChange={() => toggleSelect(t.id)} className="w-4 h-4 rounded border-white/30 bg-black/50 checked:bg-indigo-500 transition-all cursor-pointer" />)}</td><td className="p-4"><div className="text-white/90 font-medium">{t.description}</div><div className="text-white/30 text-xs mt-1">{formatDate(t.date)}</div></td><td className="p-4 text-center"><span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${t.type === 'INCOME' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>{t.type === 'INCOME' ? 'GELİR' : 'GİDER'}</span></td><td className="p-4 text-right font-light text-white text-lg">{t.amount.toLocaleString('tr-TR')} ₺</td><td className="p-4 text-center">
+                  <button onClick={() => togglePaid(t)} className={`text-xs font-bold px-3 py-1 rounded-full transition-colors ${t.isPaid ? 'bg-emerald-500/10 text-emerald-500 hover:bg-rose-500/10 hover:text-rose-500 group' : 'text-rose-400 hover:bg-emerald-500/10 hover:text-emerald-500'}`}>
                       {t.isPaid ? (
                           <>
                             <span className="group-hover:hidden flex items-center gap-1"><Check size={12}/> ÖDENDİ</span>
@@ -700,7 +800,7 @@ function AccountingView({ transactions, setTransactions }: any) {
                           </>
                       ) : "ÖDE"}
                   </button>
-              </td><td className="p-4 text-center"><button onClick={() => deleteTransaction(t.id)} className="text-white/20 hover:text-rose-500 transition-colors"><Trash2 size={16} /></button></td></tr>))}</tbody>
+              </td><td className="p-4 text-center"><button onClick={() => handleDelete(t.id)} className="text-white/20 hover:text-rose-500 transition-colors"><Trash2 size={16} /></button></td></tr>))}</tbody>
             </table>
           </div>
         </GlassCard>
@@ -711,7 +811,7 @@ function AccountingView({ transactions, setTransactions }: any) {
 }
 
 // --- TRAINERS VIEW ---
-function TrainersView({ trainers, setTrainers }: any) {
+function TrainersView({ trainers, addTrainer, updateTrainer, deleteTrainer }: any) {
   const [formData, setFormData] = useState<any>({});
   const [showModal, setShowModal] = useState(false);
   
@@ -727,9 +827,9 @@ function TrainersView({ trainers, setTrainers }: any) {
       };
 
       if (formData.id) { 
-          setTrainers(trainers.map((t: Trainer) => t.id === formData.id ? newTrainer : t)); 
+        updateTrainer(formData.id, newTrainer); 
       } else { 
-          setTrainers([...trainers, newTrainer]); 
+        addTrainer(newTrainer); 
       } 
       setShowModal(false); 
       setFormData({}); 
@@ -743,7 +843,7 @@ function TrainersView({ trainers, setTrainers }: any) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {trainers.map((t: Trainer) => (
           <GlassCard key={t.id} className="p-8 flex flex-col items-center text-center group relative overflow-hidden">
-            <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => openEditModal(t)} className="p-2 bg-blue-500/20 text-blue-300 hover:bg-blue-500 hover:text-white rounded-full transition-colors"><Pencil size={14} /></button><button onClick={() => setTrainers(trainers.filter((tr: Trainer) => tr.id !== t.id))} className="p-2 bg-rose-500/20 text-rose-300 hover:bg-rose-500 hover:text-white rounded-full transition-colors"><Trash2 size={14} /></button></div>
+            <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => openEditModal(t)} className="p-2 bg-blue-500/20 text-blue-300 hover:bg-blue-500 hover:text-white rounded-full transition-colors"><Pencil size={14} /></button><button onClick={() => deleteTrainer(t.id)} className="p-2 bg-rose-500/20 text-rose-300 hover:bg-rose-500 hover:text-white rounded-full transition-colors"><Trash2 size={14} /></button></div>
             <div className="w-24 h-24 bg-gradient-to-br from-rose-400 to-rose-600 rounded-full flex items-center justify-center text-4xl mb-6 shadow-xl shadow-rose-500/20 group-hover:scale-110 transition-transform duration-500">🧘‍♂️</div>
             <h3 className="text-xl font-medium text-white">{t.firstName} {t.lastName}</h3>
             <span className="bg-white/5 text-white/60 px-4 py-1 rounded-full text-xs mt-2 border border-white/5">Pilates Eğitmeni</span>
@@ -758,7 +858,7 @@ function TrainersView({ trainers, setTrainers }: any) {
 }
 
 // --- LESSONS VIEW ---
-function LessonsView({ lessons, setLessons, members, trainers, toggleLessonStatus, groups }: any) {
+function LessonsView({ lessons, addLesson, updateLesson, deleteLesson, members, trainers, toggleLessonStatus, groups }: any) {
   const [currentWeekStart, setCurrentWeekStart] = useState(new Date());
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState<Partial<Lesson>>({});
@@ -817,7 +917,9 @@ function LessonsView({ lessons, setLessons, members, trainers, toggleLessonStatu
     // Google Takvim URL'ini aç
     openGoogleCalendar(newLesson, lessonMembers, trainer);
     
-    setLessons([...lessons, newLesson]);
+    // Add to Firestore
+    await addLesson(newLesson);
+    
     setIsSyncing(false);
     setShowModal(false);
   };
@@ -876,7 +978,7 @@ function LessonsView({ lessons, setLessons, members, trainers, toggleLessonStatu
 }
 
 // ==========================================
-// 5. ANA UYGULAMA (Main Application)
+// 6. ANA UYGULAMA (Main Application)
 // ==========================================
 
 function DashboardView({ members, lessons, transactions }: any) {
@@ -945,33 +1047,25 @@ function DashboardView({ members, lessons, transactions }: any) {
 export default function VivaDaPilatesApp() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   
-  const [packages, setPackages] = useState<PilatesPackage[]>(DEFAULT_PACKAGES);
-  const [members, setMembers] = useState<Member[]>([]);
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [trainers, setTrainers] = useState<Trainer[]>([]);
-  const [lessons, setLessons] = useState<Lesson[]>([]);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  // FIREBASE HOOKS: Canlı Veri Akışı
+  const { data: packages, add: addPackage, update: updatePackage, remove: deletePackage } = useFirebaseCollection<PilatesPackage>('packages');
+  const { data: members, add: addMember, update: updateMember, remove: deleteMember } = useFirebaseCollection<Member>('members');
+  const { data: groups, add: addGroup, update: updateGroup, remove: deleteGroup } = useFirebaseCollection<Group>('groups');
+  const { data: trainers, add: addTrainer, update: updateTrainer, remove: deleteTrainer } = useFirebaseCollection<Trainer>('trainers');
+  const { data: lessons, add: addLesson, update: updateLesson, remove: deleteLesson } = useFirebaseCollection<Lesson>('lessons');
+  const { data: transactions, add: addTransaction, update: updateTransaction, remove: deleteTransaction } = useFirebaseCollection<Transaction>('transactions');
 
   const [loginUser, setLoginUser] = useState('');
   const [loginPass, setLoginPass] = useState('');
   const [loginError, setLoginError] = useState('');
 
+  // Paketler veritabanında boşsa varsayılanları yükle
   useEffect(() => {
-    if (members.length === 0) {
-      const pkg1 = packages.find(p => p.id === 'p2')!; 
-      
-      setMembers([
-        { 
-          id: '1', firstName: 'Ayşe', lastName: 'Yılmaz', phone: '0555 111 22 33', email: 'ayse@test.com', birthDate: '1990-01-01', healthNotes: 'Bel fıtığı başlangıcı', 
-          packageName: pkg1.name, remainingSessions: 1, balance: -500, createdAt: new Date().toISOString() 
-        }
-      ]);
-      setTrainers([
-        { id: '1', firstName: 'Çağkan', lastName: 'Hoca', phone: '0531 733 75 43', email: 'cagkan@viva.com', rate: 50, startDate: '2023-01-01' }
-      ]);
-    }
-  }, []);
+     // Sadece admin ise ve paketler hiç yoksa yükle (Opsiyonel, çakışmayı önlemek için kapalı)
+     // if (packages.length === 0) { ... }
+  }, [packages]);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -990,46 +1084,46 @@ export default function VivaDaPilatesApp() {
     setLoginPass('');
   };
 
-  const toggleLessonStatus = (lesson: Lesson) => {
+  const toggleLessonStatus = async (lesson: Lesson) => {
     const isCompleting = !lesson.isCompleted;
 
-    const updatedLessons = lessons.map(l => l.id === lesson.id ? { ...l, isCompleted: isCompleting } : l);
-    setLessons(updatedLessons);
+    // 1. Dersi Güncelle
+    await updateLesson(lesson.id, { isCompleted: isCompleting });
 
-    const updatedMembers = members.map(m => {
-      if (lesson.memberIds.includes(m.id)) {
-        return { 
-          ...m, 
-          remainingSessions: isCompleting 
-            ? m.remainingSessions - 1 
-            : m.remainingSessions + 1 
-        };
-      }
-      return m;
+    // 2. Üyelerin Kalan Haklarını Güncelle
+    lesson.memberIds.forEach(mId => {
+        const member = members.find(m => m.id === mId);
+        if (member) {
+            updateMember(member.id, { 
+                remainingSessions: isCompleting 
+                ? member.remainingSessions - 1 
+                : member.remainingSessions + 1 
+            });
+        }
     });
-    setMembers(updatedMembers);
     
+    // 3. Eğitmen Hakedişini Ekle / Sil
     if (isCompleting) {
-      // Grup dersiyse tek tek değil, eğitmen için toplam bir hakediş hesapla veya her öğrenci için ayrı
-      // Basitleştirilmiş: Her öğrenci için paket birim fiyatı üzerinden komisyon
-      
       const trainer = trainers.find(t => t.id === lesson.trainerId);
       if (trainer) {
-        // Hakediş hesaplama (Basit mantık: Ders başı sabit veya paket oranlı)
-        // Burada tahmini bir değer (Örn: 200 TL hakediş) ekliyoruz, detaylandırılabilir.
-        setTransactions(prev => [...prev, {
+        addTransaction({
           id: generateId(),
           date: new Date().toISOString(),
           type: 'EXPENSE',
           category: 'TRAINER_PAYMENT',
           description: `Hakediş: ${trainer.firstName} ${trainer.lastName} (${lesson.title})`,
-          amount: 250, // Sabit ders başı ücreti örneği
+          amount: 250, 
           relatedId: lesson.id,
           isPaid: false 
-        }]);
+        });
       }
     } else {
-      setTransactions(prev => prev.filter(t => t.relatedId !== lesson.id));
+      // İlgili hakediş kaydını bul ve sil (relatedId ile)
+      // Basit çözüm: Front-end'de bulup siliyoruz (daha iyi çözüm backend query ile olurdu)
+      const txToDelete = transactions.find(t => t.relatedId === lesson.id);
+      if (txToDelete) {
+          deleteTransaction(txToDelete.id);
+      }
     }
   };
 
@@ -1063,7 +1157,23 @@ export default function VivaDaPilatesApp() {
         <div className="absolute bottom-[10%] right-[20%] w-[500px] h-[500px] bg-emerald-500/5 rounded-full blur-[100px]" />
       </div>
 
-      <aside className="w-72 hidden md:flex flex-col fixed h-full z-20 p-6">
+      {/* Mobil Menü Butonu */}
+      <button 
+        className="md:hidden fixed top-4 left-4 z-50 p-2 bg-rose-600 rounded-full text-white shadow-lg pointer-events-auto"
+        onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+      >
+        <Menu size={24} />
+      </button>
+
+      {/* Mobil Menü Arkaplanı */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/80 z-30 md:hidden pointer-events-auto" 
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      <aside className={`w-72 fixed h-full z-40 p-6 transition-transform duration-300 pointer-events-auto ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
         <GlassCard className="h-full flex flex-col bg-black/20 border-white/5">
           <div className="p-8 flex flex-col items-center border-b border-white/5">
             <div className="w-14 h-14 bg-gradient-to-tr from-rose-400 to-rose-600 rounded-2xl rotate-3 flex items-center justify-center mb-4 shadow-lg shadow-rose-900/40">
@@ -1072,12 +1182,12 @@ export default function VivaDaPilatesApp() {
             <h2 className="text-lg font-light text-white tracking-widest">VIVA DA</h2>
           </div>
           <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
-            <SidebarItem icon={<Menu size={18} />} label="Genel Bakış" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-            <SidebarItem icon={<Users size={18} />} label="Üyeler & Gruplar" active={activeTab === 'members'} onClick={() => setActiveTab('members')} />
-            <SidebarItem icon={<Calendar size={18} />} label="Takvim" active={activeTab === 'lessons'} onClick={() => setActiveTab('lessons')} />
-            {currentUser.role === 'ADMIN' && <SidebarItem icon={<UserCog size={18} />} label="Eğitmenler" active={activeTab === 'trainers'} onClick={() => setActiveTab('trainers')} />}
-            <SidebarItem icon={<Box size={18} />} label="Paketler" active={activeTab === 'packages'} onClick={() => setActiveTab('packages')} />
-            {currentUser.role === 'ADMIN' && <SidebarItem icon={<Wallet size={18} />} label="Finans" active={activeTab === 'accounting'} onClick={() => setActiveTab('accounting')} />}
+            <SidebarItem icon={<Menu size={18} />} label="Genel Bakış" active={activeTab === 'dashboard'} onClick={() => { setActiveTab('dashboard'); setIsSidebarOpen(false); }} />
+            <SidebarItem icon={<Users size={18} />} label="Üyeler & Gruplar" active={activeTab === 'members'} onClick={() => { setActiveTab('members'); setIsSidebarOpen(false); }} />
+            <SidebarItem icon={<Calendar size={18} />} label="Takvim" active={activeTab === 'lessons'} onClick={() => { setActiveTab('lessons'); setIsSidebarOpen(false); }} />
+            {currentUser.role === 'ADMIN' && <SidebarItem icon={<UserCog size={18} />} label="Eğitmenler" active={activeTab === 'trainers'} onClick={() => { setActiveTab('trainers'); setIsSidebarOpen(false); }} />}
+            <SidebarItem icon={<Box size={18} />} label="Paketler" active={activeTab === 'packages'} onClick={() => { setActiveTab('packages'); setIsSidebarOpen(false); }} />
+            {currentUser.role === 'ADMIN' && <SidebarItem icon={<Wallet size={18} />} label="Finans" active={activeTab === 'accounting'} onClick={() => { setActiveTab('accounting'); setIsSidebarOpen(false); }} />}
           </nav>
           <div className="p-6 border-t border-white/5">
             <button onClick={handleLogout} className="w-full flex items-center justify-center gap-2 text-white/40 hover:text-rose-400 hover:bg-white/5 px-3 py-3 rounded-2xl transition-all duration-300 text-sm"><LogOut size={16} /> Çıkış</button>
@@ -1088,11 +1198,55 @@ export default function VivaDaPilatesApp() {
       <main className="flex-1 md:ml-72 p-4 md:p-8 overflow-y-auto h-screen relative z-10">
         <div className="max-w-7xl mx-auto">
           {activeTab === 'dashboard' && <DashboardView members={members} lessons={lessons} transactions={transactions} />}
-          {activeTab === 'members' && <MembersView members={members} setMembers={setMembers} packages={packages} setTransactions={setTransactions} groups={groups} setGroups={setGroups} />}
-          {activeTab === 'lessons' && <LessonsView lessons={lessons} setLessons={setLessons} members={members} trainers={trainers} toggleLessonStatus={toggleLessonStatus} groups={groups} />}
-          {activeTab === 'trainers' && currentUser.role === 'ADMIN' && <TrainersView trainers={trainers} setTrainers={setTrainers} />}
-          {activeTab === 'packages' && <PackagesView packages={packages} setPackages={setPackages} />}
-          {activeTab === 'accounting' && currentUser.role === 'ADMIN' && <AccountingView transactions={transactions} setTransactions={setTransactions} />}
+          {activeTab === 'members' && (
+            <MembersView 
+              members={members} 
+              addMember={addMember} 
+              updateMember={updateMember} 
+              deleteMember={deleteMember}
+              packages={packages} 
+              addTransaction={addTransaction}
+              groups={groups}
+              addGroup={addGroup}
+              deleteGroup={deleteGroup}
+            />
+          )}
+          {activeTab === 'lessons' && (
+            <LessonsView 
+              lessons={lessons} 
+              addLesson={addLesson}
+              updateLesson={updateLesson}
+              deleteLesson={deleteLesson}
+              members={members} 
+              trainers={trainers} 
+              toggleLessonStatus={toggleLessonStatus} 
+              groups={groups} 
+            />
+          )}
+          {activeTab === 'trainers' && currentUser.role === 'ADMIN' && (
+            <TrainersView 
+              trainers={trainers} 
+              addTrainer={addTrainer}
+              updateTrainer={updateTrainer}
+              deleteTrainer={deleteTrainer}
+            />
+          )}
+          {activeTab === 'packages' && (
+            <PackagesView 
+              packages={packages} 
+              addPackage={addPackage}
+              updatePackage={updatePackage}
+              deletePackage={deletePackage}
+            />
+          )}
+          {activeTab === 'accounting' && currentUser.role === 'ADMIN' && (
+            <AccountingView 
+              transactions={transactions} 
+              addTransaction={addTransaction}
+              updateTransaction={updateTransaction}
+              deleteTransaction={deleteTransaction}
+            />
+          )}
         </div>
       </main>
     </div>
