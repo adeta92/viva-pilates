@@ -1,34 +1,3 @@
-// Bu hook'u dosyanın üstüne ekle
-function useLocalStorage<T>(key: string, initialValue: T) {
-  // Başlangıç değerini güvenli şekilde al (Next.js SSR hatasını önlemek için)
-  const [storedValue, setStoredValue] = useState<T>(() => {
-    if (typeof window === "undefined") return initialValue;
-    try {
-      const item = window.localStorage.getItem(key);
-      return item ? JSON.parse(item) : initialValue;
-    } catch (error) {
-      console.log(error);
-      return initialValue;
-    }
-  });
-
-  // Değer değişince localStorage'a yaz
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(key, JSON.stringify(storedValue));
-    }
-  }, [key, storedValue]);
-
-  return [storedValue, setStoredValue] as const;
-}
-
-// KULLANIMI (DashboardView içinde):
-// const [members, setMembers] = useState<Member[]>([]); YERİNE AŞAĞIDAKİNİ KULLAN:
-const [members, setMembers] = useLocalStorage<Member[]>('viva_members', []);
-const [lessons, setLessons] = useLocalStorage<Lesson[]>('viva_lessons', []);
-// Diğer state'ler için de aynısı...
-
-
 "use client";
 
 import React, { useState, useEffect, useMemo } from 'react';
