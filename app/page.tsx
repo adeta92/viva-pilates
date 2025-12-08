@@ -8,7 +8,7 @@ import {
 import { 
   Calendar, Users, UserCog, LogOut, 
   Plus, Trash2, Check, X, ChevronLeft, ChevronRight, 
-  Search, AlertCircle, Menu, Wallet, HeartPulse, CreditCard, RefreshCcw, Phone, Mail, Box, Pencil, CalendarCheck, TrendingUp, Calculator, Upload, Users2
+  Search, AlertCircle, Menu, Wallet, HeartPulse, CreditCard, RefreshCcw, RotateCcw, Phone, Mail, Box, Pencil, CalendarCheck, TrendingUp, Calculator, Upload, Users2
 } from 'lucide-react';
 
 // ==========================================
